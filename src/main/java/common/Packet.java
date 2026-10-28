@@ -1,4 +1,4 @@
-package src.main.java.common;
+package common;
 
 public class Packet{
     private final PacketHeader header;

@@ -1,13 +1,20 @@
 package common.payload;
 
-public class UserListRequest {
-    public final String sessionID;
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonProperty;
 
-    public UserListRequest(String sessionID) {
-        this.sessionID = sessionID;
+public final class UserListRequest {
+    private final String sessionID;
+    @JsonProperty("cursor") private String cursor;
+
+    @JsonCreator
+    public UserListRequest(@JsonProperty("session_id") String sessionID) { this.sessionID = sessionID; }
+
+    public UserListRequest(String sessionID, String cursor) {
+        this(sessionID);
+        this.cursor = cursor;
     }
 
-    public String getSessionID() {
-        return sessionID;
-    }
+    @JsonProperty("session_id") public String getSessionID() { return sessionID; }
+    public String getCursor() { return cursor; }
 }

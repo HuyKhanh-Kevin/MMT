@@ -1,31 +1,31 @@
 package common.payload;
 
-public class LoginResponse {
-    private final boolean status;
-    private final String sessionID;
-    private final int userID;
-    private final String reason;
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonProperty;
 
-    public LoginResponse(boolean status, String sessionID, int userID, String reason) {
-        this.status = status;
-        this.sessionID = sessionID;
-        this.userID = userID;
-        this.reason = reason;
+@JsonInclude(JsonInclude.Include.NON_NULL)
+public final class LoginResponse {
+    private final String status;
+    @JsonProperty("session_id") private String sessionID;
+    @JsonProperty("user_id") private Integer userID;
+    @JsonProperty("reason") private String reason;
+
+    // These fields are conditional; only status is a required creator property.
+    @JsonCreator
+    public LoginResponse(@JsonProperty("status") String status) { this.status = status; }
+
+    public LoginResponse(boolean success, String sessionID, int userID, String reason) {
+        this(success ? "success" : "failed");
+        this.sessionID = success ? sessionID : null;
+        this.userID = success ? userID : null;
+        this.reason = success ? null : reason;
     }
 
-    public boolean isStatus() {
-        return status;
-    }
-
-    public String getSessionID() {
-        return sessionID;
-    }
-
-    public int getUserID() {
-        return userID;
-    }
-
-    public String getReason() {
-        return reason;
-    }
+    @JsonProperty("status") public String getStatus() { return status; }
+    @JsonIgnore public boolean isStatus() { return "success".equals(status); }
+    @JsonProperty("session_id") public String getSessionID() { return sessionID; }
+    @JsonProperty("user_id") public Integer getUserID() { return userID; }
+    public String getReason() { return reason; }
 }

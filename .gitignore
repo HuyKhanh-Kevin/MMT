@@ -1,0 +1,6 @@
+/target/
+/.tools/
+/data/
+/branch/
+/README.md
+*.log

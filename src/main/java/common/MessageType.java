@@ -15,8 +15,8 @@ public class MessageType {
     public static final String FILE_CHUNK = "0x08";
     public static final String ERROR = "0x0A";
     public static final String FILE_DONE = "0x0B";
-    public static final String SINGUP_REQUEST = "0x0C";
-    public static final String SINGUP_RESPONSE = "0x0D";
+    public static final String SIGNUP_REQUEST = "0x0C";
+    public static final String SIGNUP_RESPONSE = "0x0D";
     public static final String FILE_ACCEPT = "0x0E";
     public static final String FILE_REJECT = "0x0F";
     public static final String REQ_RESEND = "0x10";

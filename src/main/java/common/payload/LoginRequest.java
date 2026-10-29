@@ -1,4 +1,7 @@
-package src/main/java/common/payload;
+package common.payload;
+
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonProperty;
 
 public class LoginRequest {
     private final String username;
@@ -6,8 +9,13 @@ public class LoginRequest {
     private final int tcpPort;
     private final int fileUdpPort;
 
-    public LoginRequest(String username, String password,
-                        int tcpPort, int fileUdpPort) {
+    @JsonCreator
+    public LoginRequest(
+            @JsonProperty("username") String username,
+            @JsonProperty("password") String password,
+            @JsonProperty("tcp_port") int tcpPort,
+            @JsonProperty("file_udp_port") int fileUdpPort) {
+
         this.username = username;
         this.password = password;
         this.tcpPort = tcpPort;

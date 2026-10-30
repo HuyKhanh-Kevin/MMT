@@ -19,6 +19,11 @@ public final class FileChunk {
                     "Chunk data exceeds the maximum size");
         }
 
+        if (chunkOrder < 0) {
+            throw new IllegalArgumentException(
+                    "Chunk order must be non-negative");
+        }
+
         this.fileID = fileID;
         this.chunkOrder = chunkOrder;
         this.payloadData = payloadData.clone();

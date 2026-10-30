@@ -77,6 +77,13 @@ public final class JsonPayloadCodec {
             throw new IOException("JSON payload must be an object");
         }
 
+        if (type == common.payload.LoginResponse.class) {
+            return MAPPER.readerFor(type)
+                    .without(
+                        DeserializationFeature.FAIL_ON_NULL_CREATOR_PROPERTIES)
+                    .readValue(json.traverse(MAPPER));
+        }
+
         return MAPPER.treeToValue(json, type);
     }
 

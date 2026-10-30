@@ -6,7 +6,7 @@ public class LogoutRequest {
     private final String sessionID;
 
     @JsonCreator 
-    public LogoutRequest(@JsonProperty("sessionID") String sessionID) {
+    public LogoutRequest(@JsonProperty("session_id") String sessionID) {
         this.sessionID = sessionID;
     }
 

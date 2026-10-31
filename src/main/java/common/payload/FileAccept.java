@@ -7,7 +7,7 @@ public class FileAccept {
 
     @JsonCreator
     public FileAccept(
-        @JsonProperty("fileID") int fileID
+        @JsonProperty("file_id") int fileID
     ){
         this.fileID = fileID;
     }

@@ -1,16 +1,47 @@
 package common.payload;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 public class LoginResponse {
     private final boolean status;
     private final String sessionID;
-    private final int userID;
+    private final Long userID;
     private final String reason;
 
-    public LoginResponse(boolean status, String sessionID, int userID, String reason) {
-        this.status = status;
-        this.sessionID = sessionID;
-        this.userID = userID;
-        this.reason = reason;
+
+    @JsonCreator 
+    public LoginResponse(
+        @JsonProperty("status") boolean status, 
+        @JsonProperty("session_id") String sessionID, 
+        @JsonProperty("user_id") Long userID, 
+        @JsonProperty("reason") String reason
+    ){
+        if (status) {
+            if (sessionID == null || sessionID.isBlank()) {
+                throw new IllegalArgumentException("Session ID is required");
+            }
+
+            if (userID == null || userID < 1 || userID > 0xFFFF_FFFFL) {
+                throw new IllegalArgumentException("Invalid user ID");
+            }
+        } else {
+            if (reason == null || reason.isBlank()) {
+                throw new IllegalArgumentException("Failure reason is required");
+            }
+        }
+        if(status == false){
+            this.status = status;
+            this.sessionID = null;
+            this.userID = null;
+            this.reason = reason;
+        }
+        else{
+            this.status = status;
+            this.sessionID = sessionID;
+            this.userID = userID;
+            this.reason = null;
+        }
     }
 
     public boolean isStatus() {
@@ -21,7 +52,7 @@ public class LoginResponse {
         return sessionID;
     }
 
-    public int getUserID() {
+    public Long getUserID() {
         return userID;
     }
 

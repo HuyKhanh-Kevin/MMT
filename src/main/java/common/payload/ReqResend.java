@@ -12,7 +12,7 @@ public class ReqResend {
 
     @JsonCreator 
     public ReqResend(
-        @JsonProperty("fileID") int fileID, 
+        @JsonProperty("file_id") int fileID, 
         @JsonProperty("resendAll") boolean resendAll,
         @JsonProperty("missingChunks") List<Integer> missingChunks
     ){

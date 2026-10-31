@@ -6,7 +6,7 @@ public class Packet{
 
     public Packet(PacketHeader header, byte[] payload){
         this.header = header;
-        this.payload = payload;
+        this.payload = payload.clone();
     }
 
     public PacketHeader getHeader() {
@@ -14,7 +14,7 @@ public class Packet{
     } 
 
     public byte[] getPayload() {
-        return payload;
+        return payload.clone();
     }
 };
 

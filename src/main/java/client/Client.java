@@ -4,6 +4,8 @@ import src.main.java.common.*;
 import src.main.java.common.payload.*;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.net.DatagramSocket;
+import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -13,12 +15,16 @@ public class Client {
     private final AtomicInteger sequenceCounter = new AtomicInteger(1);
     private volatile Boolean running;
     private volatile Boolean authenticated;
-    private final Socket socket;
+    private final Socket TCPSocket;
+    private final DatagramSocket UDPSocket;
+    private final InetSocketAddress serverUdpAddress;
 
-    public Client(String serverIp, int serverPort) throws IOException {
+    public Client(String serverIp, int serverPort, int udpPort) throws IOException {
         running = true;
         authenticated = false;
-        socket = new Socket(serverIp, serverPort);
+        TCPSocket = new Socket(serverIp, serverPort);
+        UDPSocket = new DatagramSocket(0);
+        serverUdpAddress = new InetSocketAddress(serverIp, udpPort);
     }
 
     public Boolean getRunning() {
@@ -38,7 +44,7 @@ public class Client {
         running = false;
         authenticated = false;
         try {
-            socket.close();
+            TCPSocket.close();
         }
         catch (IOException e) {
             System.out.println("Socket error: " + e.getMessage());
@@ -47,9 +53,13 @@ public class Client {
 
     private void receiveLoop() {}
 
-    public void sendPacket(Packet packet) throws IOException {
-        OutputStream outputStream = socket.getOutputStream();
+    public void sendTCPPacket(Packet packet) throws IOException {
+        OutputStream outputStream = TCPSocket.getOutputStream();
         PacketIO.writePacket(outputStream, packet);
+    }
+
+    public void sendUDPPacket(Packet packet) throws IOException {
+        UdpPacketIO.sendPacket(UDPSocket, serverUdpAddress, packet);
     }
 
     public Packet createSignupPacket(String username, String password) {}

@@ -34,25 +34,25 @@ public class CommandLineInterface {
                 switch (command) {
                     case "1": {
                         Packet packet = client.createOnlineUsersListPacket();
-                        client.sendPacket(packet);
+                        client.sendUDPPacket(packet);
                         break;
                     }
                     case "2": {
                         int recipientId = scanner.nextInt();
                         String message = scanner.nextLine();
                         Packet packet = client.createPrivateChatPacket(recipientId, message);
-                        client.sendPacket(packet);
+                        client.sendTCPPacket(packet);
                         break;
                     }
                     case "3": {
                         String message = scanner.nextLine();
                         Packet packet = client.createGlobalChatPacket(message);
-                        client.sendPacket(packet);
+                        client.sendTCPPacket(packet);
                         break;
                     }
                     case "4": {
                         Packet packet = client.createLogoutPacket();
-                        client.sendPacket(packet);
+                        client.sendTCPPacket(packet);
                         break;
                     }
                 }
@@ -63,14 +63,14 @@ public class CommandLineInterface {
                         String username = scanner.nextLine();
                         String password = scanner.nextLine();
                         Packet packet = client.createSignupPacket(username, password);
-                        client.sendPacket(packet);
+                        client.sendTCPPacket(packet);
                         break;
                     }
                     case "2": {
                         String username = scanner.nextLine();
                         String password = scanner.nextLine();
                         Packet packet = client.createLoginPacket(username, password);
-                        client.sendPacket(packet);
+                        client.sendTCPPacket(packet);
                         break;
                     }
                     case "3": {

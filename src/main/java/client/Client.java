@@ -7,7 +7,7 @@ import java.io.OutputStream;
 import java.net.Socket;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class TCPClient {
+public class Client {
     private int id;
     private String sessionId;
     private final AtomicInteger sequenceCounter = new AtomicInteger(1);
@@ -15,7 +15,7 @@ public class TCPClient {
     private volatile Boolean authenticated;
     private final Socket socket;
 
-    public TCPClient(String serverIp, int serverPort) throws IOException {
+    public Client(String serverIp, int serverPort) throws IOException {
         running = true;
         authenticated = false;
         socket = new Socket(serverIp, serverPort);

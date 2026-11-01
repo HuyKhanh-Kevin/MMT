@@ -5,20 +5,20 @@ import java.io.IOException;
 import java.util.Scanner;
 
 public class ClientCLI {
-    private final TCPClient tcpClient;
+    private final Client client;
 
-    public ClientCLI(TCPClient client) {
-        tcpClient = client;
+    public ClientCLI(Client client) {
+        this.client = client;
     }
 
     public void displayMenu() {
         System.out.println("Choose one of the options");
-        if (!tcpClient.getAuthenticated()) {
+        if (!client.getAuthenticated()) {
             System.out.println("1. Signup");
             System.out.println("2. Login");
             System.out.println("3. Exit");
         }
-        else if (tcpClient.getAuthenticated()) {
+        else if (client.getAuthenticated()) {
             System.out.println("1. Online Users List");
             System.out.println("2. Private Chat");
             System.out.println("3. Global Chat");
@@ -27,32 +27,32 @@ public class ClientCLI {
     }
 
     public void startSending() throws IOException {
-        while (tcpClient.getRunning()) {
+        while (client.getRunning()) {
             Scanner scanner = new Scanner(System.in);
             String command = scanner.nextLine();
-            if (tcpClient.getAuthenticated()) {
+            if (client.getAuthenticated()) {
                 switch (command) {
                     case "1": {
-                        Packet packet = tcpClient.createOnlineUsersListPacket();
-                        tcpClient.sendPacket(packet);
+                        Packet packet = client.createOnlineUsersListPacket();
+                        client.sendPacket(packet);
                         break;
                     }
                     case "2": {
                         int recipientId = scanner.nextInt();
                         String message = scanner.nextLine();
-                        Packet packet = tcpClient.createPrivateChatPacket(recipientId, message);
-                        tcpClient.sendPacket(packet);
+                        Packet packet = client.createPrivateChatPacket(recipientId, message);
+                        client.sendPacket(packet);
                         break;
                     }
                     case "3": {
                         String message = scanner.nextLine();
-                        Packet packet = tcpClient.createGlobalChatPacket(message);
-                        tcpClient.sendPacket(packet);
+                        Packet packet = client.createGlobalChatPacket(message);
+                        client.sendPacket(packet);
                         break;
                     }
                     case "4": {
-                        Packet packet = tcpClient.createLogoutPacket();
-                        tcpClient.sendPacket(packet);
+                        Packet packet = client.createLogoutPacket();
+                        client.sendPacket(packet);
                         break;
                     }
                 }
@@ -62,15 +62,15 @@ public class ClientCLI {
                     case "1": {
                         String username = scanner.nextLine();
                         String password = scanner.nextLine();
-                        Packet packet = tcpClient.createSignupPacket(username, password);
-                        tcpClient.sendPacket(packet);
+                        Packet packet = client.createSignupPacket(username, password);
+                        client.sendPacket(packet);
                         break;
                     }
                     case "2": {
                         String username = scanner.nextLine();
                         String password = scanner.nextLine();
-                        Packet packet = tcpClient.createLoginPacket(username, password);
-                        tcpClient.sendPacket(packet);
+                        Packet packet = client.createLoginPacket(username, password);
+                        client.sendPacket(packet);
                         break;
                     }
                     case "3": {

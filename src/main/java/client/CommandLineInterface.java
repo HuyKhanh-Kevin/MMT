@@ -4,10 +4,10 @@ import src.main.java.common.*;
 import java.io.IOException;
 import java.util.Scanner;
 
-public class ClientCLI {
+public class CommandLineInterface {
     private final Client client;
 
-    public ClientCLI(Client client) {
+    public CommandLineInterface(Client client) {
         this.client = client;
     }
 

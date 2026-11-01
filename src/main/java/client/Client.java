@@ -88,7 +88,25 @@ public class Client {
         return new Packet(header, payload);
     }
 
-    public Packet createPrivateChatPacket(int receiverId, String message) {}
+    public Packet createPrivateChatPacket(int receiverId, String message) throws IOException {
+        if (!authenticated || sessionId == null) {
+            throw new IllegalStateException("You must log in before sending private messages");
+        }
+        int sequenceNumber = sequenceCounter.getAndIncrement();
+        ChatMessage chatMessage = new ChatMessage(message);
+        byte[] payload = JsonPayloadCodec.encode(chatMessage);
+        PacketHeader header = new PacketHeader(ProtocolConstants.VERSION, MessageType.CHAT_MESSAGE, 0, 0, sequenceNumber, payload.length, id, receiverId);
+        return new Packet(header, payload);
+    }
 
-    public Packet createGlobalChatPacket(String message) {}
+    public Packet createGlobalChatPacket(String message) throws IOException {
+        if (!authenticated || sessionId == null) {
+            throw new IllegalStateException("You must log in before sending global messages");
+        }
+        int sequenceNumber = sequenceCounter.getAndIncrement();
+        ChatMessage chatMessage = new ChatMessage(message);
+        byte[] payload = JsonPayloadCodec.encode(chatMessage);
+        PacketHeader header = new PacketHeader(ProtocolConstants.VERSION, MessageType.CHAT_MESSAGE, 0, 0, sequenceNumber, payload.length, id, 0);
+        return new Packet(header, payload);
+    }
 }

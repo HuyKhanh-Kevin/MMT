@@ -1,4 +1,4 @@
-package common;
+package src.main.java.common;
 
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.databind.DeserializationFeature;

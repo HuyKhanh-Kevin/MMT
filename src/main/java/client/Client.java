@@ -3,6 +3,7 @@ package src.main.java.client;
 import src.main.java.common.*;
 import src.main.java.common.payload.*;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.DatagramSocket;
 import java.net.InetSocketAddress;
@@ -40,8 +41,8 @@ public class Client {
     }
 
     public void startReceiving() {
-        Thread thread = new Thread(this::receiveLoop);
-        thread.start();
+        new Thread(this::receiveTCPLoop, "tcp-receiver").start();
+        new Thread(this::receiveUDPLoop, "udp-receiver").start();
     }
 
     private void closeConnection() {
@@ -55,7 +56,9 @@ public class Client {
         }
     }
 
-    private void receiveLoop() {}
+    private void receiveTCPLoop() {}
+
+    private void receiveUDPLoop() {}
 
     public void sendTCPPacket(Packet packet) throws IOException {
         OutputStream outputStream = TCPSocket.getOutputStream();
@@ -69,10 +72,13 @@ public class Client {
     public Packet createSignupPacket(String username, String password) {}
 
     public Packet createLoginPacket(String username, String password) throws IOException {
+        if (authenticated) {
+            throw new IllegalStateException("You are already logged in");
+        }
         int sequenceNumber = sequenceCounter.getAndIncrement();
         LoginRequest loginRequest = new LoginRequest(username, password, peerTCPPort, fileUDPPort);
         byte[] payload = JsonPayloadCodec.encode(loginRequest);
-        PacketHeader header = new PacketHeader(ProtocolConstants.VERSION, MessageType.LOGIN_REQUEST, 0, 0, sequenceNumber, payload.length, id, 0);
+        PacketHeader header = new PacketHeader(ProtocolConstants.VERSION, MessageType.LOGIN_REQUEST, 0, 0, sequenceNumber, payload.length, 0, 0);
         return new Packet(header, payload);
     }
 

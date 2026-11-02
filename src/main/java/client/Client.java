@@ -117,6 +117,7 @@ public class Client {
         while (running) {
             try {
                 UdpPacketIO.ReceivedPacket receivedPacket = UdpPacketIO.receivePacket(UDPSocket);
+                if (!serverUdpAddress.equals(receivedPacket.source())) continue;
                 Packet packet = receivedPacket.packet();
                 switch (packet.getHeader().getMessageType()) {
                     case MessageType.USER_LIST_RESPONSE -> {

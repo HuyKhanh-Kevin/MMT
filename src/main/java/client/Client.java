@@ -15,16 +15,20 @@ public class Client {
     private final AtomicInteger sequenceCounter = new AtomicInteger(1);
     private volatile Boolean running;
     private volatile Boolean authenticated;
+    private final int peerTCPPort;
+    private final int fileUDPPort;
     private final Socket TCPSocket;
     private final DatagramSocket UDPSocket;
     private final InetSocketAddress serverUdpAddress;
 
-    public Client(String serverIp, int serverPort, int udpPort) throws IOException {
+    public Client(String serverIp, int serverPort, int udpPort, int peerTCPPort, int fileUDPPort) throws IOException {
         running = true;
         authenticated = false;
         TCPSocket = new Socket(serverIp, serverPort);
         UDPSocket = new DatagramSocket(0);
         serverUdpAddress = new InetSocketAddress(serverIp, udpPort);
+        this.peerTCPPort = peerTCPPort;
+        this.fileUDPPort = fileUDPPort;
     }
 
     public Boolean getRunning() {
@@ -64,7 +68,13 @@ public class Client {
 
     public Packet createSignupPacket(String username, String password) {}
 
-    public Packet createLoginPacket(String username, String password) {}
+    public Packet createLoginPacket(String username, String password) throws IOException {
+        int sequenceNumber = sequenceCounter.getAndIncrement();
+        LoginRequest loginRequest = new LoginRequest(username, password, peerTCPPort, fileUDPPort);
+        byte[] payload = JsonPayloadCodec.encode(loginRequest);
+        PacketHeader header = new PacketHeader(ProtocolConstants.VERSION, MessageType.LOGIN_REQUEST, 0, 0, sequenceNumber, payload.length, id, 0);
+        return new Packet(header, payload);
+    }
 
     public Packet createLogoutPacket() throws IOException{
         if (!authenticated || sessionId == null) {

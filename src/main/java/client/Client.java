@@ -7,6 +7,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.DatagramSocket;
 import java.net.InetSocketAddress;
+import java.net.SocketException;
 import java.net.Socket;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -48,6 +49,7 @@ public class Client {
     private void closeConnection() {
         running = false;
         authenticated = false;
+        UDPSocket.close();
         try {
             TCPSocket.close();
         }
@@ -56,9 +58,42 @@ public class Client {
         }
     }
 
-    private void receiveTCPLoop() {}
+    private void receiveTCPLoop() {
+        try {
+            InputStream inputStream = TCPSocket.getInputStream();
+            while (running) {
+                Packet packet = PacketIO.readPacket(inputStream);
+                if (packet == null) break;
+            }
+        }
+        catch (IOException e) {
+            if (running) {
+                System.out.println("TCP receive error: " + e.getMessage());
+            }
+        }
+        finally {
+            closeConnection();
+        }
+    }
 
-    private void receiveUDPLoop() {}
+    private void receiveUDPLoop() {
+        while (running) {
+            try {
+                UdpPacketIO.ReceivedPacket packet = UdpPacketIO.receivePacket(UDPSocket);
+            }
+            catch (SocketException e) {
+                if (running) {
+                    System.out.println("UDP socket error: " + e.getMessage());
+                }
+                break;
+            }
+            catch (IOException e) {
+                if (running) {
+                    System.out.println("UDP receive error: " + e.getMessage());
+                }
+            }
+        }
+    }
 
     public void sendTCPPacket(Packet packet) throws IOException {
         OutputStream outputStream = TCPSocket.getOutputStream();

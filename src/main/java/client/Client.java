@@ -9,12 +9,15 @@ import java.net.DatagramSocket;
 import java.net.InetSocketAddress;
 import java.net.SocketException;
 import java.net.Socket;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class Client {
     private int id;
     private String sessionId;
-    private final AtomicInteger sequenceCounter = new AtomicInteger(1);
+    private final AtomicInteger TCPSequenceCounter = new AtomicInteger(1);
+    private final AtomicInteger UDPSequenceCounter = new AtomicInteger(1);
+    private final AtomicInteger heartbeatCounter = new AtomicInteger(1);
     private volatile Boolean running;
     private volatile Boolean authenticated;
     private final int peerTCPPort;
@@ -23,6 +26,8 @@ public class Client {
     private final DatagramSocket UDPSocket;
     private final InetSocketAddress serverUdpAddress;
     private ClientListener listener;
+    private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
+    private ScheduledFuture<?> heartbeatTask;
 
     public Client(String serverIp, int serverPort, int udpPort, int peerTCPPort, int fileUDPPort) throws IOException {
         running = true;
@@ -61,6 +66,10 @@ public class Client {
         catch (IOException e) {
             System.out.println("Socket error: " + e.getMessage());
         }
+        if (heartbeatTask != null) {
+            heartbeatTask.cancel(false);
+        }
+        scheduler.shutdownNow();
     }
 
     private void receiveTCPLoop() {
@@ -76,6 +85,7 @@ public class Client {
                             id = loginResponse.getUserID().intValue();
                             sessionId = loginResponse.getSessionID();
                             authenticated = true;
+                            startHeartbeat();
                         }
                         listener.displayLoginResponse(loginResponse.isStatus(), loginResponse.getReason());
                     }
@@ -138,15 +148,31 @@ public class Client {
         UdpPacketIO.sendPacket(UDPSocket, serverUdpAddress, packet);
     }
 
+    private void startHeartbeat() {
+        if (heartbeatTask != null && !heartbeatTask.isDone()) {
+            return;
+        }
+        heartbeatTask = scheduler.scheduleAtFixedRate(() -> {
+            if (!authenticated) return;
+            try {
+                Packet packet = createHeartbeatPacket();
+                sendUDPPacket(packet);
+            }
+            catch (IOException e) {
+                System.out.println("Heartbeat error: " + e.getMessage());
+            }
+        }, 5, 5, TimeUnit.SECONDS);
+    }
+
     public Packet createSignupPacket(String username, String password) {}
 
     public Packet createLoginPacket(String username, String password) throws IOException {
         if (authenticated) {
             throw new IllegalStateException("You are already logged in");
         }
-        int sequenceNumber = sequenceCounter.getAndIncrement();
         LoginRequest loginRequest = new LoginRequest(username, password, peerTCPPort, fileUDPPort);
         byte[] payload = JsonPayloadCodec.encode(loginRequest);
+        int sequenceNumber = TCPSequenceCounter.getAndIncrement();
         PacketHeader header = new PacketHeader(ProtocolConstants.VERSION, MessageType.LOGIN_REQUEST, 0, 0, sequenceNumber, payload.length, 0, 0);
         return new Packet(header, payload);
     }
@@ -155,9 +181,9 @@ public class Client {
         if (!authenticated || sessionId == null) {
             throw new IllegalStateException("You must log in before logging out");
         }
-        int sequenceNumber = sequenceCounter.getAndIncrement();
         LogoutRequest logoutRequest = new LogoutRequest(sessionId);
         byte[] payload = JsonPayloadCodec.encode(logoutRequest);
+        int sequenceNumber = TCPSequenceCounter.getAndIncrement();
         PacketHeader header = new PacketHeader(ProtocolConstants.VERSION, MessageType.LOGOUT_REQUEST, 0, 0, sequenceNumber, payload.length, id, 0);
         return new Packet(header, payload);
     }
@@ -166,9 +192,9 @@ public class Client {
         if (!authenticated || sessionId == null) {
             throw new IllegalStateException("You must log in before requesting online users");
         }
-        int sequenceNumber = sequenceCounter.getAndIncrement();
         UserListRequest userListRequest = new UserListRequest(sessionId);
         byte[] payload = JsonPayloadCodec.encode(userListRequest);
+        int sequenceNumber = UDPSequenceCounter.getAndIncrement();
         PacketHeader header = new PacketHeader(ProtocolConstants.VERSION, MessageType.USER_LIST_REQUEST, 0, 0, sequenceNumber, payload.length, id, 0);
         return new Packet(header, payload);
     }
@@ -177,9 +203,9 @@ public class Client {
         if (!authenticated || sessionId == null) {
             throw new IllegalStateException("You must log in before sending private messages");
         }
-        int sequenceNumber = sequenceCounter.getAndIncrement();
         ChatMessage chatMessage = new ChatMessage(message);
         byte[] payload = JsonPayloadCodec.encode(chatMessage);
+        int sequenceNumber = TCPSequenceCounter.getAndIncrement();
         PacketHeader header = new PacketHeader(ProtocolConstants.VERSION, MessageType.CHAT_MESSAGE, 0, 0, sequenceNumber, payload.length, id, receiverId);
         return new Packet(header, payload);
     }
@@ -188,10 +214,19 @@ public class Client {
         if (!authenticated || sessionId == null) {
             throw new IllegalStateException("You must log in before sending global messages");
         }
-        int sequenceNumber = sequenceCounter.getAndIncrement();
         ChatMessage chatMessage = new ChatMessage(message);
         byte[] payload = JsonPayloadCodec.encode(chatMessage);
+        int sequenceNumber = TCPSequenceCounter.getAndIncrement();
         PacketHeader header = new PacketHeader(ProtocolConstants.VERSION, MessageType.CHAT_MESSAGE, 0, 0, sequenceNumber, payload.length, id, 0);
+        return new Packet(header, payload);
+    }
+
+    private Packet createHeartbeatPacket() throws IOException {
+        int heartbeatSequence = heartbeatCounter.getAndIncrement();
+        Heartbeat heartbeat = new Heartbeat(sessionId, heartbeatSequence);
+        byte[] payload = JsonPayloadCodec.encode(heartbeat);
+        int sequenceNumber = UDPSequenceCounter.getAndIncrement();
+        PacketHeader header = new PacketHeader(ProtocolConstants.VERSION, MessageType.HEARTBEAT, 0, 0, sequenceNumber, payload.length, id, 0);
         return new Packet(header, payload);
     }
 }

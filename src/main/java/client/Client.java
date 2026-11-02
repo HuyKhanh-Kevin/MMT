@@ -22,6 +22,7 @@ public class Client {
     private final Socket TCPSocket;
     private final DatagramSocket UDPSocket;
     private final InetSocketAddress serverUdpAddress;
+    private ClientListener listener;
 
     public Client(String serverIp, int serverPort, int udpPort, int peerTCPPort, int fileUDPPort) throws IOException {
         running = true;
@@ -35,6 +36,10 @@ public class Client {
 
     public Boolean getRunning() {
         return running;
+    }
+
+    public void setListener(ClientListener listener) {
+        this.listener = listener;
     }
 
     public Boolean getAuthenticated() {
@@ -64,6 +69,28 @@ public class Client {
             while (running) {
                 Packet packet = PacketIO.readPacket(inputStream);
                 if (packet == null) break;
+                switch (packet.getHeader().getMessageType()) {
+                    case MessageType.LOGIN_RESPONSE -> {
+                        LoginResponse loginResponse = JsonPayloadCodec.decode(packet.getPayload(), LoginResponse.class);
+                        if (loginResponse.isStatus()) {
+                            id = loginResponse.getUserID().intValue();
+                            sessionId = loginResponse.getSessionID();
+                            authenticated = true;
+                        }
+                        listener.displayLoginResponse(loginResponse.isStatus(), loginResponse.getReason());
+                    }
+                    case MessageType.LOGOUT_RESPONSE -> {
+                        LogoutResponse logoutResponse = JsonPayloadCodec.decode(packet.getPayload(), LogoutResponse.class);
+                        if (logoutResponse.getStatus().equals("success")) {
+                            listener.displayLogoutResponse();
+                            closeConnection();
+                        }
+                    }
+                    case MessageType.CHAT_MESSAGE -> {
+                        ChatMessage chatMessage = JsonPayloadCodec.decode(packet.getPayload(), ChatMessage.class);
+                        listener.displayMessage(packet.getHeader().getSenderID(), chatMessage.getText());
+                    }
+                }
             }
         }
         catch (IOException e) {
@@ -79,7 +106,14 @@ public class Client {
     private void receiveUDPLoop() {
         while (running) {
             try {
-                UdpPacketIO.ReceivedPacket packet = UdpPacketIO.receivePacket(UDPSocket);
+                UdpPacketIO.ReceivedPacket receivedPacket = UdpPacketIO.receivePacket(UDPSocket);
+                Packet packet = receivedPacket.packet();
+                switch (packet.getHeader().getMessageType()) {
+                    case MessageType.USER_LIST_RESPONSE -> {
+                        UserListResponse userListResponse = JsonPayloadCodec.decode(packet.getPayload(), UserListResponse.class);
+                        listener.displayUserList(userListResponse.getUsers());
+                    }
+                }
             }
             catch (SocketException e) {
                 if (running) {

@@ -2,9 +2,11 @@ package src.main.java.client;
 
 import src.main.java.common.*;
 import java.io.IOException;
+import java.util.List;
 import java.util.Scanner;
+import src.main.java.common.payload.*;
 
-public class CommandLineInterface {
+public class CommandLineInterface implements ClientListener{
     private final Client client;
 
     public CommandLineInterface(Client client) {
@@ -79,5 +81,38 @@ public class CommandLineInterface {
                 }
             }
         }
+    }
+
+    @Override
+    public void displayUserList(List<UserInfo> users) {
+        for (UserInfo user : users) {
+            System.out.println("id: " + user.userID() + " | username: " + user.username() + " | status: " + user.status());
+        }
+    }
+
+    @Override
+    public void displayMessage(int senderId, String message) {
+        System.out.println("id: " + senderId + " | message: " + message);
+    }
+
+    @Override
+    public void displaySignupResponse() {
+        System.out.println("signup successful");
+    }
+
+    @Override
+    public void displayLoginResponse(boolean status, String reason) {
+        if (status) {
+            System.out.println("login successful");
+        }
+        else {
+            System.out.println("login failed");
+            System.out.println("reason: " + reason);
+        }
+    }
+
+    @Override
+    public void displayLogoutResponse() {
+        System.out.println("logout successful");
     }
 }

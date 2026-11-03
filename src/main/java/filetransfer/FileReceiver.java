@@ -141,11 +141,17 @@ public class FileReceiver {
                 udpSocket.receive(datagram);
 
                 byte[] data = Arrays.copyOf(datagram.getData(), datagram.getLength());
+
+                if (data.length < PacketHeader.SIZE) continue;
+                PacketHeader header = PacketHeader.fromBytes(Arrays.copyOf(data, PacketHeader.SIZE));
+
+                if (header.messageType != FileTransferProtocol.TYPE_FILE_CHUNK || data.length < PacketHeader.SIZE + 12) continue;
                 ByteBuffer payload = ByteBuffer.wrap(data, PacketHeader.SIZE, data.length - PacketHeader.SIZE);
 
                 long fileId     = payload.getInt() & 0xFFFFFFFFL;
                 int  chunkOrder = payload.getInt();
                 int  payloadLen = payload.getInt();
+
 
                 byte[] chunkData = new byte[payloadLen];
                 payload.get(chunkData);
@@ -156,9 +162,12 @@ public class FileReceiver {
                 if (!chunkReceived[chunkOrder]) {
                     chunkReceived[chunkOrder] = true;
                     received++;
+                    System.out.printf("[UDP] Chunk %d/%d%n", chunkOrder + 1, meta.totalChunks);
+                } else {
+                    System.out.printf("[UDP] Duplicated%n", chunkOrder + 1);
                 }
             }
-            System.out.printf("[UDP] Finished receiving: %d/%d chunks.%n", received, meta.totalChunks);
+            System.out.printf("[UDP] Finished: %d/%d chunks%n", received, meta.totalChunks);
         }
     }
 

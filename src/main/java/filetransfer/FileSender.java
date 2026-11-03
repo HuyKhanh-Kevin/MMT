@@ -9,7 +9,6 @@ import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 
 public class FileSender {
@@ -125,33 +124,28 @@ public class FileSender {
 
 
     // FILE_REQ function
-    private static void sendFileReq(DataOutputStream out, long ID, String fileName, long fileSize, int totalChunks, String checksum) {
-        try{
-            // Payload
-            String json = String.format(
-                "{\"File_ID\":%d,\"File_Name\":\"%s\",\"File_Size\":%d,\"Total_Chunks\":%d,\"Checksum\":\"%s\"}",
-                ID, fileName, fileSize, totalChunks, checksum
-            );
-            byte[] payload = json.getBytes("UTF-8");
-            
-            // Header
-            PacketHeader header = new PacketHeader(
-                ProtocolConstants.VERSION, TYPE_FILE_REQ, FileTransferProtocol.FLAG_ACK_NOT_REQUIRED, STREAM_ID, 1, SENDER_ID, RECEIVER_ID, payload.length
-            );
-    
-            // Send
-            out.write(header.toBytes());
-            out.write(payload);
-            out.flush();
-        } catch(Exception e){
-            System.out.printf("FILE_REQ function Failed!, %s%n", e.toString());
-            return;
-        }
+    private static void sendFileReq(DataOutputStream out, long ID, String fileName, long fileSize, int totalChunks, String checksum) throws Exception{
+        // Payload
+        String json = String.format(
+            "{\"File_ID\":%d,\"File_Name\":\"%s\",\"File_Size\":%d,\"Total_Chunks\":%d,\"Checksum\":\"%s\"}",
+            ID, fileName, fileSize, totalChunks, checksum
+        );
+        byte[] payload = json.getBytes("UTF-8");
         
+        // Header
+        PacketHeader header = new PacketHeader(
+            ProtocolConstants.VERSION, TYPE_FILE_REQ, FileTransferProtocol.FLAG_ACK_NOT_REQUIRED, STREAM_ID, 1, SENDER_ID, RECEIVER_ID, payload.length
+        );
+
+        // Send
+        out.write(header.toBytes());
+        out.write(payload);
+        out.flush();
+        return;
     }
 
     // Send Chunks function
-    private static void sendAllChunks(String receiverAddr, int receiverUdpPort, long fileId, byte[] fileData, int totalChunks) {
+    private static void sendAllChunks(String receiverAddr, int receiverUdpPort, long fileId, byte[] fileData, int totalChunks) throws IOException{
         try (DatagramSocket udpSocket = new DatagramSocket()) {
             for (int chunkOrder = 0; chunkOrder < totalChunks; chunkOrder++) {
                 // Payload
@@ -185,43 +179,28 @@ public class FileSender {
     
                 System.out.printf("[UDP] Sent chunk %d/%d (%d bytes)%n", chunkOrder + 1, totalChunks, length);
             }
-        } catch(IOException e){
-            System.out.printf("Send Chunks fucntion Failed!, %s%n", e.toString());
-            return;
         }
-        
     }
 
     // Receive Control Message fucntion
-    private static int receiveControlMessage(DataInputStream in) {
-        try {
-            byte[] headerBuf = new byte[PacketHeader.SIZE];
-            in.readFully(headerBuf);
-            PacketHeader header = PacketHeader.fromBytes(headerBuf);
-            
-            byte[] payloadBuf = new byte[(int) header.payloadLength];
-            in.readFully(payloadBuf); 
-            String payload = new String(payloadBuf, "UTF-8"); // Haven't been used in demo
+    private static int receiveControlMessage(DataInputStream in) throws IOException {
+        byte[] headerBuf = new byte[PacketHeader.SIZE];
+        in.readFully(headerBuf);
+        PacketHeader header = PacketHeader.fromBytes(headerBuf);
+        
+        byte[] payloadBuf = new byte[(int) header.payloadLength];
+        in.readFully(payloadBuf); 
+        String payload = new String(payloadBuf, "UTF-8"); // Haven't been used in demo
 
-            System.out.printf("Received header: %s, with payload: %s%n", header, payload);
+        System.out.printf("Received header: %s, with payload: %s%n", header, payload);
 
-    
-            return header.messageType;
-        } catch(IOException e){
-            System.out.printf("Receive Control Message Failed!, %s%n", e.toString());
-            return 0;
-        }
+        return header.messageType;
     }
 
 
-    private static String sha256Hex(byte[] data) {
-        try{
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest(data);
-            return HexFormat.of().formatHex(hash);
-        } catch(NoSuchAlgorithmException e) {
-            System.out.printf("Hash Function Failed!, %s%n", e.toString());
-            return "";
-        }
+    private static String sha256Hex(byte[] data) throws Exception {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        byte[] hash = digest.digest(data);
+        return HexFormat.of().formatHex(hash);
     }
 }

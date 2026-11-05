@@ -29,9 +29,10 @@ public class CommandLineInterface implements ClientListener{
     }
 
     public void startSending() throws IOException {
+        Scanner scanner = new Scanner(System.in);
         while (client.getRunning()) {
-            Scanner scanner = new Scanner(System.in);
             String command = scanner.nextLine();
+            if (!client.getRunning()) break;
             if (client.getAuthenticated()) {
                 switch (command) {
                     case "1": {
@@ -40,7 +41,7 @@ public class CommandLineInterface implements ClientListener{
                         break;
                     }
                     case "2": {
-                        int recipientId = scanner.nextInt();
+                        int recipientId = Integer.parseInt(scanner.nextLine());
                         String message = scanner.nextLine();
                         Packet packet = client.createPrivateChatPacket(recipientId, message);
                         client.sendTCPPacket(packet);
@@ -76,6 +77,7 @@ public class CommandLineInterface implements ClientListener{
                         break;
                     }
                     case "3": {
+                        client.exitProgram();
                         break;
                     }
                 }
@@ -122,6 +124,7 @@ public class CommandLineInterface implements ClientListener{
     @Override
     public void displayLogoutResponse() {
         System.out.println("Logout successful");
+        System.out.println("Connection closed. Press Enter to exit.");
     }
 
     @Override

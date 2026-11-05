@@ -9,12 +9,15 @@ import java.net.DatagramSocket;
 import java.net.InetSocketAddress;
 import java.net.SocketException;
 import java.net.Socket;
+import java.util.Map;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class Client {
     private int id;
     private String sessionId;
+    private final Map<Integer, Integer> outgoingStream = new ConcurrentHashMap<>();
+    private final AtomicInteger streamId = new AtomicInteger(1);
     private final AtomicInteger TCPSequenceCounter = new AtomicInteger(1);
     private final AtomicInteger UDPSequenceCounter = new AtomicInteger(1);
     private final AtomicInteger heartbeatCounter = new AtomicInteger(1);
@@ -49,6 +52,10 @@ public class Client {
 
     public Boolean getAuthenticated() {
         return authenticated;
+    }
+
+    private int getOutgoingStreamId(int receiverId) {
+        return outgoingStream.computeIfAbsent(receiverId, ignored -> streamId.getAndIncrement());
     }
 
     public void startReceiving() {
@@ -96,8 +103,8 @@ public class Client {
                     case MessageType.LOGOUT_RESPONSE -> {
                         LogoutResponse logoutResponse = JsonPayloadCodec.decode(packet.getPayload(), LogoutResponse.class);
                         if (logoutResponse.getStatus().equals("success")) {
-                            listener.displayLogoutResponse();
                             closeConnection();
+                            listener.displayLogoutResponse();
                         }
                     }
                     case MessageType.CHAT_MESSAGE -> {
@@ -225,7 +232,7 @@ public class Client {
         ChatMessage chatMessage = new ChatMessage(message);
         byte[] payload = JsonPayloadCodec.encode(chatMessage);
         int sequenceNumber = TCPSequenceCounter.getAndIncrement();
-        PacketHeader header = new PacketHeader(ProtocolConstants.VERSION, MessageType.CHAT_MESSAGE, 0, 0, sequenceNumber, payload.length, id, receiverId);
+        PacketHeader header = new PacketHeader(ProtocolConstants.VERSION, MessageType.CHAT_MESSAGE, 0, getOutgoingStreamId(receiverId), sequenceNumber, payload.length, id, receiverId);
         return new Packet(header, payload);
     }
 
@@ -236,7 +243,7 @@ public class Client {
         ChatMessage chatMessage = new ChatMessage(message);
         byte[] payload = JsonPayloadCodec.encode(chatMessage);
         int sequenceNumber = TCPSequenceCounter.getAndIncrement();
-        PacketHeader header = new PacketHeader(ProtocolConstants.VERSION, MessageType.CHAT_MESSAGE, 0, 0, sequenceNumber, payload.length, id, 0);
+        PacketHeader header = new PacketHeader(ProtocolConstants.VERSION, MessageType.CHAT_MESSAGE, 0, getOutgoingStreamId(0), sequenceNumber, payload.length, id, 0);
         return new Packet(header, payload);
     }
 
@@ -247,5 +254,9 @@ public class Client {
         int sequenceNumber = UDPSequenceCounter.getAndIncrement();
         PacketHeader header = new PacketHeader(ProtocolConstants.VERSION, MessageType.HEARTBEAT, 0, 0, sequenceNumber, payload.length, id, 0);
         return new Packet(header, payload);
+    }
+
+    public void exitProgram() {
+        closeConnection();
     }
 }

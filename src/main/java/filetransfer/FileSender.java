@@ -146,7 +146,8 @@ public class FileSender {
 
     // Send Chunks function
     private static void sendAllChunks(String receiverAddr, int receiverUdpPort, long fileId, byte[] fileData, int totalChunks) throws IOException{
-        try (DatagramSocket udpSocket = new DatagramSocket()) {
+        try (UDP udpSocket = new UDP()) {
+            byte[][] chunksPayload = new byte[totalChunks][];
             for (int chunkOrder = 0; chunkOrder < totalChunks; chunkOrder++) {
                 // Payload
                 int offset = chunkOrder * ProtocolConstants.MAX_CHUNK_DATA_SIZE;
@@ -154,30 +155,48 @@ public class FileSender {
                 byte[] chunkData = new byte[length];
                 System.arraycopy(fileData, offset, chunkData, 0, length);
     
-                int chunkPayloadSize = ProtocolConstants.CHUNK_METADATA_SIZE + length;
-                ByteBuffer chunkPayload = ByteBuffer.allocate(chunkPayloadSize);
-                chunkPayload.putInt((int) fileId);
-                chunkPayload.putInt(chunkOrder);
-                chunkPayload.putInt(length);
-                chunkPayload.put(chunkData);
+                // int chunkPayloadSize = ProtocolConstants.CHUNK_METADATA_SIZE + length;
+                // ByteBuffer chunkPayload = ByteBuffer.allocate(chunkPayloadSize);
+                // chunkPayload.putInt((int) fileId);
+                // chunkPayload.putInt(chunkOrder);
+                // chunkPayload.putInt(length);
+                // chunkPayload.put(chunkData);
     
-                // Header
-                PacketHeader header = new PacketHeader(
-                    ProtocolConstants.VERSION, TYPE_FILE_CHUNK, FileTransferProtocol.FLAG_ACK_REQUIRED, STREAM_ID, chunkOrder + 2, SENDER_ID, RECEIVER_ID, chunkPayloadSize
-                );
-    
-                // Send
-                byte[] headerBytes  = header.toBytes();
-                byte[] payloadBytes = chunkPayload.array();
-                byte[] datagram     = new byte[headerBytes.length + payloadBytes.length];
-                System.arraycopy(headerBytes, 0, datagram, 0, headerBytes.length);
-                System.arraycopy(payloadBytes, 0, datagram, headerBytes.length, payloadBytes.length);
-    
-                InetAddress rAddr = InetAddress.getByName(receiverAddr);
-                DatagramPacket packet = new DatagramPacket(datagram, datagram.length, rAddr, receiverUdpPort);
-                udpSocket.send(packet);
-    
-                System.out.printf("[UDP] Sent chunk %d/%d (%d bytes)%n", chunkOrder + 1, totalChunks, length);
+                chunksPayload[chunkOrder] = chunkData;
+            }
+            // Header
+            PacketHeader header = new PacketHeader(
+                ProtocolConstants.VERSION, TYPE_FILE_CHUNK, FileTransferProtocol.FLAG_ACK_REQUIRED, STREAM_ID, chunkOrder + 2, SENDER_ID, RECEIVER_ID, chunkPayloadSize
+            );
+
+            // Send
+            byte[] headerBytes  = header.toBytes();
+            byte[] payloadBytes = chunkPayload.array();
+            byte[] datagram     = new byte[headerBytes.length + payloadBytes.length];
+            System.arraycopy(headerBytes, 0, datagram, 0, headerBytes.length);
+            System.arraycopy(payloadBytes, 0, datagram, headerBytes.length, payloadBytes.length);
+
+            InetAddress rAddr = InetAddress.getByName(receiverAddr);
+            DatagramPacket packet = new DatagramPacket(datagram, datagram.length, rAddr, receiverUdpPort);
+            // udpSocket.send(packet);
+            udpSocket.send(
+                ProtocolConstants.VERSION, 
+                TYPE_FILE_CHUNK, 
+                FileTransferProtocol.FLAG_ACK_REQUIRED, 
+                STREAM_ID, 
+                SENDER_ID, 
+                RECEIVER_ID,
+                chunksPayload,
+                rAddr,
+                receiverUdpPort
+            );
+
+            System.out.printf("[UDP] Sent chunk %d/%d (%d bytes)%n", chunkOrder + 1, totalChunks, length);
+            try{
+                Thread.sleep(10);
+
+            }catch(Exception e){
+
             }
         }
     }

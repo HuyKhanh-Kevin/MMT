@@ -79,15 +79,19 @@ public class Client {
                 Packet packet = PacketIO.readPacket(inputStream);
                 if (packet == null) break;
                 switch (packet.getHeader().getMessageType()) {
+                    case MessageType.SIGNUP_RESPONSE -> {
+                        SignupResponse signupResponse = JsonPayloadCodec.decode(packet.getPayload(), SignupResponse.class);
+                        listener.displaySignupResponse(signupResponse.status, signupResponse.reason);
+                    }
                     case MessageType.LOGIN_RESPONSE -> {
                         LoginResponse loginResponse = JsonPayloadCodec.decode(packet.getPayload(), LoginResponse.class);
-                        if (loginResponse.isStatus()) {
+                        if (loginResponse.getStatus().equals("success")) {
                             id = loginResponse.getUserID().intValue();
                             sessionId = loginResponse.getSessionID();
                             authenticated = true;
                             startHeartbeat();
                         }
-                        listener.displayLoginResponse(loginResponse.isStatus(), loginResponse.getReason());
+                        listener.displayLoginResponse(loginResponse.getStatus(), loginResponse.getReason());
                     }
                     case MessageType.LOGOUT_RESPONSE -> {
                         LogoutResponse logoutResponse = JsonPayloadCodec.decode(packet.getPayload(), LogoutResponse.class);

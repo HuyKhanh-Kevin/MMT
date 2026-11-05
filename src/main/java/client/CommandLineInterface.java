@@ -85,6 +85,7 @@ public class CommandLineInterface implements ClientListener{
 
     @Override
     public void displayUserList(List<UserInfo> users) {
+        System.out.println("Users list:");
         for (UserInfo user : users) {
             System.out.println("id: " + user.userID() + " | username: " + user.username() + " | status: " + user.status());
         }
@@ -96,23 +97,30 @@ public class CommandLineInterface implements ClientListener{
     }
 
     @Override
-    public void displaySignupResponse() {
-        System.out.println("signup successful");
+    public void displaySignupResponse(String status, String reason) {
+        if (status.equals("success")) {
+            System.out.println("Signup successful");
+            System.out.println("Please login to your account");
+        }
+        else {
+            System.out.println("Signup failed");
+            System.out.println("Reason: " + reason);
+        }
     }
 
     @Override
-    public void displayLoginResponse(boolean status, String reason) {
-        if (status) {
-            System.out.println("login successful");
+    public void displayLoginResponse(String status, String reason) {
+        if (status.equals("success")) {
+            System.out.println("Login successful");
         }
         else {
-            System.out.println("login failed");
-            System.out.println("reason: " + reason);
+            System.out.println("Login failed");
+            System.out.println("Reason: " + reason);
         }
     }
 
     @Override
     public void displayLogoutResponse() {
-        System.out.println("logout successful");
+        System.out.println("Logout successful");
     }
 }

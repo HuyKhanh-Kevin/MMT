@@ -165,7 +165,13 @@ public class Client {
         }, 5, 5, TimeUnit.SECONDS);
     }
 
-    public Packet createSignupPacket(String username, String password) {}
+    public Packet createSignupPacket(String username, String password) throws IOException {
+        SignupRequest signupRequest = new SignupRequest(username, password);
+        byte[] payload = JsonPayloadCodec.encode(signupRequest);
+        int sequenceNumber = TCPSequenceCounter.getAndIncrement();
+        PacketHeader header = new PacketHeader(ProtocolConstants.VERSION, MessageType.SIGNUP_REQUEST, 0, 0, sequenceNumber, payload.length, 0, 0);
+        return new Packet(header, payload);
+    }
 
     public Packet createLoginPacket(String username, String password) throws IOException {
         if (authenticated) {

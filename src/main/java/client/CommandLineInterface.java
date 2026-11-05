@@ -87,13 +87,13 @@ public class CommandLineInterface implements ClientListener{
     public void displayUserList(List<UserInfo> users) {
         System.out.println("Users list:");
         for (UserInfo user : users) {
-            System.out.println("id: " + user.userID() + " | username: " + user.username() + " | status: " + user.status());
+            System.out.println("ID: " + user.userID() + " | Username: " + user.username() + " | Status: " + user.status());
         }
     }
 
     @Override
     public void displayMessage(int senderId, String message) {
-        System.out.println("id: " + senderId + " | message: " + message);
+        System.out.println("ID: " + senderId + " | Message: " + message);
     }
 
     @Override
@@ -122,5 +122,10 @@ public class CommandLineInterface implements ClientListener{
     @Override
     public void displayLogoutResponse() {
         System.out.println("Logout successful");
+    }
+
+    @Override
+    public void displayError(int code, String message) {
+        System.out.println("Error: " + code + " | Message: " + message);
     }
 }

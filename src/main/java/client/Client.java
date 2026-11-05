@@ -104,6 +104,10 @@ public class Client {
                         ChatMessage chatMessage = JsonPayloadCodec.decode(packet.getPayload(), ChatMessage.class);
                         listener.displayMessage(packet.getHeader().getSenderID(), chatMessage.getText());
                     }
+                    case MessageType.ERROR -> {
+                        ErrorPayload error = JsonPayloadCodec.decode(packet.getPayload(), ErrorPayload.class);
+                        listener.displayError(error.getErrorCode(), error.getErrorMessage());
+                    }
                 }
             }
         }
@@ -127,6 +131,10 @@ public class Client {
                     case MessageType.USER_LIST_RESPONSE -> {
                         UserListResponse userListResponse = JsonPayloadCodec.decode(packet.getPayload(), UserListResponse.class);
                         listener.displayUserList(userListResponse.getUsers());
+                    }
+                    case MessageType.ERROR -> {
+                        ErrorPayload error = JsonPayloadCodec.decode(packet.getPayload(), ErrorPayload.class);
+                        listener.displayError(error.getErrorCode(), error.getErrorMessage());
                     }
                 }
             }

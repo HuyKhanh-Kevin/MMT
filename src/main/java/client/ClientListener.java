@@ -9,4 +9,5 @@ public interface ClientListener {
     public void displaySignupResponse(String status, String reason);
     public void displayLoginResponse(String status, String reason);
     public void displayLogoutResponse();
+    public void displayError(int code, String message);
 }

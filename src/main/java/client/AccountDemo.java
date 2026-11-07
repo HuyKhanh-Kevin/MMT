@@ -23,7 +23,7 @@ public final class AccountDemo {
              AccountClient client = new AccountClient(host, tcpPort, udpPort, peer.getLocalPort(), file.getLocalPort());
              Scanner input = new Scanner(System.in)) {
             client.onPresence(update -> System.out.printf("%n[presence] %s: %s%n", update.username(), update.status()));
-            System.out.println("Commands: signup, login, users, logout, pause, resume, quit");
+            System.out.println("Commands: signup, login, users, endpoint, status, logout, pause, resume, quit");
             while (true) {
                 System.out.print("> ");
                 if (!input.hasNextLine()) break;
@@ -47,13 +47,20 @@ public final class AccountDemo {
                                 "%d %-32s %s TCP=%d file UDP=%d%n", user.userID(), user.username(),
                                 user.ip(), user.tcpPort(), user.fileUdpPort()));
                         case "logout" -> { client.logout(); System.out.println("Logged out."); }
+                        case "endpoint" -> {
+                            System.out.print("Recipient user_id: ");
+                            PeerEndpoint endpoint = client.peerEndpoint(Long.parseLong(input.nextLine().trim()));
+                            System.out.printf("%s: TCP=%s, file UDP=%s%n", endpoint.username(), endpoint.tcp(), endpoint.fileUDP());
+                        }
+                        case "status" -> System.out.println(!client.isConnected() ? "Disconnected. Restart client to reconnect."
+                                : client.isAuthenticated() ? "Online. user_id=" + client.userID() : "Connected, logged out.");
                         case "pause" -> { client.setHeartbeatsEnabled(false); System.out.println("Heartbeat paused. Session expires after 15s of silence."); }
                         case "resume" -> { client.setHeartbeatsEnabled(true); System.out.println("Heartbeat resumed (if session has not expired)."); }
                         case "quit" -> {
                             if (client.isAuthenticated()) try { client.logout(); } catch (IOException ignored) { }
                             return;
                         }
-                        default -> System.out.println("Commands: signup, login, users, logout, pause, resume, quit");
+                        default -> System.out.println("Commands: signup, login, users, endpoint, status, logout, pause, resume, quit");
                     }
                 } catch (IOException | IllegalArgumentException e) {
                     System.out.println("Request failed: " + e.getMessage());

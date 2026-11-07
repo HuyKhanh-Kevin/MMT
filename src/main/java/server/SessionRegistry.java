@@ -23,6 +23,7 @@ public final class SessionRegistry {
     private final Map<UUID, Session> byConnection = new HashMap<>();
     private final Queue<PresenceUpdate> changes = new ArrayDeque<>();
     private final Queue<UUID> disconnected = new ArrayDeque<>();
+    private final Set<UUID> expiredConnections = new HashSet<>();
 
     public record Peer(int userID, String username, String ip, int tcpPort, int fileUdpPort,
                        Instant lastSeen, InetSocketAddress presenceEndpoint) {
@@ -77,7 +78,7 @@ public final class SessionRegistry {
         Session previous = byConnection.get(connection);
         boolean expiredConnection = previous != null && expired(previous);
         expire();
-        if (expiredConnection) throw invalid("SESSION_EXPIRED_RECONNECT");
+        if (expiredConnection || expiredConnections.contains(connection)) throw invalid("SESSION_EXPIRED_RECONNECT");
         if (byConnection.containsKey(connection)) throw invalid("ALREADY_AUTHENTICATED");
         if (byUser.containsKey(account.userID())) {
             throw new AccountException(ErrorCode.USERNAME_TAKEN, "ALREADY_ONLINE");
@@ -103,6 +104,19 @@ public final class SessionRegistry {
         return udpSession(token, senderID, source).peer();
     }
 
+    /** Call before processing a protected request on the TCP control connection. */
+    public synchronized Peer authenticateTcp(String token, int senderID, UUID connection)
+            throws AccountException {
+        return tcpSession(token, senderID, connection).peer();
+    }
+
+    /** Authenticate and capture the directory in one registry operation. */
+    public synchronized List<UserInfo> discover(String token, int senderID, InetSocketAddress source)
+            throws AccountException {
+        udpSession(token, senderID, source);
+        return onlinePeers().stream().map(Peer::userInfo).toList();
+    }
+
     public synchronized void heartbeat(String token, int senderID, long sequence, InetSocketAddress source)
             throws AccountException {
         Session session = udpSession(token, senderID, source);
@@ -116,12 +130,12 @@ public final class SessionRegistry {
     }
 
     public synchronized void logout(String token, int senderID, UUID connection) throws AccountException {
-        Session session = require(token, senderID);
-        if (!session.connection.equals(connection)) throw unauthenticated();
+        Session session = tcpSession(token, senderID, connection);
         remove(session, false);
     }
 
     public synchronized void disconnect(UUID connection) {
+        expiredConnections.remove(connection);
         Session session = byConnection.get(connection);
         if (session != null) remove(session, false);
     }
@@ -170,6 +184,12 @@ public final class SessionRegistry {
         return session;
     }
 
+    private Session tcpSession(String token, int senderID, UUID connection) throws AccountException {
+        Session session = require(token, senderID);
+        if (!session.connection.equals(connection)) throw unauthenticated();
+        return session;
+    }
+
     private boolean expired(Session session) {
         return nanoTime.getAsLong() - session.lastHeartbeat >= timeoutNanos;
     }
@@ -179,7 +199,10 @@ public final class SessionRegistry {
         byUser.remove(session.account.userID(), session);
         byConnection.remove(session.connection, session);
         changes.add(new PresenceUpdate(session.account.username(), "offline"));
-        if (closeControl) disconnected.add(session.connection);
+        if (closeControl) {
+            expiredConnections.add(session.connection);
+            disconnected.add(session.connection);
+        }
     }
 
     private static void checkPort(int port) throws AccountException {

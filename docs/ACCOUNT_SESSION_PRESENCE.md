@@ -10,6 +10,8 @@ Phần này xác định người dùng là ai, người đó đang online ở �
 | `server/SessionRegistry.java` | Cấp token, chống đăng nhập đồng thời, quản lý endpoint, heartbeat và trạng thái online |
 | `server/OnlineDirectory.java` | Chia danh sách online thành các trang JSON tối đa 1.100 byte |
 | `server/TrackerServer.java` | Nhận TCP/UDP, gọi các xử lý trên, trả phản hồi và phát presence |
+| `server/AccountRequestHandler.java` | Đầu vào xử lý các request account/discovery để ghép với server |
+| `client/PeerEndpoint.java` | Endpoint TCP và UDP truyền file lấy từ danh sách online |
 | `client/AccountClient.java` | API mẫu cho client chính: signup, login, logout, onlineUsers, onPresence |
 | `client/AccountDemo.java` | Giao diện dòng lệnh để demo phần việc này |
 | `common/payload/` | Dữ liệu JSON cho từng loại gói tin |
@@ -159,7 +161,11 @@ account.logout();
 account.close();
 ```
 
-Đoạn trên minh họa các điểm gọi; `refreshOnlineUserView()` là hàm của UI. Callback presence chạy trên luồng nhận UDP; khi dùng GUI, chuyển việc cập nhật giao diện về luồng UI và tránh chờ `onlineUsers()` ngay trong callback vì chính luồng này cần tiếp tục nhận phản hồi. Dùng một tác vụ nền để lấy danh sách.
+Đoạn trên minh họa các điểm gọi; `refreshOnlineUserView()` là hàm của UI. Callback presence chạy trên một luồng riêng, nên có thể gọi `onlineUsers()` trong callback mà không chặn luồng nhận UDP. Khi dùng GUI, vẫn cần chuyển thao tác cập nhật thành phần giao diện về luồng UI.
+
+Client theo dõi kết nối TCP ở nền: khi server đóng kết nối vì timeout hoặc mất kết nối, `isAuthenticated()` và `isConnected()` tự chuyển thành `false`. Logout bình thường chỉ xóa trạng thái đăng nhập và vẫn giữ kết nối để login lại. `peerEndpoint(userID)` tải lại danh sách online rồi trả endpoint TCP/UDP cho module file, hoặc báo `2001: RECIPIENT_OFFLINE` nếu không có người nhận.
+
+Hướng dẫn tích hợp tiếp theo và cách demo các tiêu chí trong ảnh: [INTEGRATION_ACCOUNT_SESSION.md](INTEGRATION_ACCOUNT_SESSION.md).
 
 Ở server, module routing có thể dùng `server.sessions().findOnlineUser(userID)` hoặc `onlinePeers()` để đọc endpoint. Kết quả là bản sao bất biến, không trả token. `SessionRegistry.authenticateUdp(...)` có thể dùng khi payload của module đó mang token và dùng cùng endpoint UDP điều khiển; nếu module chat dùng socket riêng, nhóm cần thống nhất cơ chế gắn socket đó với phiên.
 

@@ -77,10 +77,12 @@ class TrackerServerTest {
             observer.onlineUsers();
             silent.signup("silent", "password123");
             silent.login("silent", "password123");
+            int silentID = silent.userID();
             silent.setHeartbeatsEnabled(false);
             assertEquals(new PresenceUpdate("silent", "online"), events.poll(2, TimeUnit.SECONDS));
             assertEquals(new PresenceUpdate("silent", "offline"), events.poll(18, TimeUnit.SECONDS));
-            assertTrue(server.sessions().findOnlineUser(silent.userID()).isEmpty());
+            assertTrue(server.sessions().findOnlineUser(silentID).isEmpty());
+            await(() -> !silent.isAuthenticated() && !silent.isConnected());
             assertThrows(IOException.class, silent::onlineUsers);
         }
     }

@@ -13,17 +13,19 @@ import java.util.function.Consumer;
 
 /** Small reference client for integrating the account module into the team's UI. */
 public final class AccountClient implements AutoCloseable {
-    private record Login(String token, int userID) {}
+    private record Login(String token, int userID, AtomicLong heartbeatSequence) {}
+    private final Object stateLock = new Object();
     private final Socket tcp;
     private final DatagramSocket udp;
     private final InetSocketAddress serverUDP;
     private final int peerTCPPort;
     private final int fileUDPPort;
     private final AtomicInteger sequence = new AtomicInteger();
-    private final AtomicLong heartbeatSequence = new AtomicLong();
     private final Map<Integer, CompletableFuture<Packet>> pending = new ConcurrentHashMap<>();
+    private final Map<Integer, CompletableFuture<Packet>> pendingTCP = new ConcurrentHashMap<>();
     private final ScheduledExecutorService heartbeat = Executors.newSingleThreadScheduledExecutor();
-    private final ExecutorService receiver = Executors.newSingleThreadExecutor();
+    private final ExecutorService receiver = Executors.newFixedThreadPool(2);
+    private final ExecutorService callbacks = Executors.newSingleThreadExecutor();
     private volatile Consumer<PresenceUpdate> presenceListener = update -> {};
     private volatile Login login;
     private volatile boolean closed;
@@ -40,7 +42,8 @@ public final class AccountClient implements AutoCloseable {
         DatagramSocket datagram = null;
         try {
             tcp.connect(new InetSocketAddress(host, serverTCPPort), 3000);
-            tcp.setSoTimeout(5000);
+            // The reader also watches for EOF while the UI is idle. Request deadlines use futures.
+            tcp.setSoTimeout(0);
             datagram = new DatagramSocket();
             serverUDP = new InetSocketAddress(tcp.getInetAddress(), serverUDPPort);
             datagram.connect(serverUDP);
@@ -51,6 +54,7 @@ public final class AccountClient implements AutoCloseable {
         }
         udp = datagram;
         receiver.execute(this::receiveLoop);
+        receiver.execute(this::receiveControlLoop);
         heartbeat.scheduleAtFixedRate(this::sendHeartbeat, 0, 5, TimeUnit.SECONDS);
     }
 
@@ -59,8 +63,9 @@ public final class AccountClient implements AutoCloseable {
     }
 
     public boolean isAuthenticated() { return login != null; }
-    public int userID() { return login == null ? 0 : login.userID(); }
-    public String sessionID() { return login == null ? null : login.token(); }
+    public boolean isConnected() { return !closed; }
+    public int userID() { Login current = login; return current == null ? 0 : current.userID(); }
+    public String sessionID() { Login current = login; return current == null ? null : current.token(); }
 
     public synchronized SignupResponse signup(String username, String password) throws IOException {
         requireLoggedOut();
@@ -74,8 +79,10 @@ public final class AccountClient implements AutoCloseable {
                 0, new LoginRequest(username, password, peerTCPPort, fileUDPPort)).getPayload(), LoginResponse.class);
         if (response.isStatus()) {
             if (response.getSessionID() == null || response.getUserID() == null) throw new IOException("Incomplete login response");
-            heartbeatSequence.set(0);
-            login = new Login(response.getSessionID(), response.getUserID());
+            synchronized (stateLock) {
+                if (closed) throw new IOException("Server closed the connection; reconnect");
+                login = new Login(response.getSessionID(), response.getUserID(), new AtomicLong());
+            }
             sendHeartbeat(); // Register this socket's actual UDP source port immediately.
         }
         return response;
@@ -112,14 +119,40 @@ public final class AccountClient implements AutoCloseable {
         return List.copyOf(users);
     }
 
+    /** Refresh discovery before selecting the TCP control and UDP data endpoints for a transfer. */
+    public PeerEndpoint peerEndpoint(long userID) throws IOException {
+        if (userID < 1 || userID > 0xFFFF_FFFFL) throw new IllegalArgumentException("Invalid user ID");
+        UserInfo user = onlineUsers().stream().filter(peer -> peer.userID() == userID).findFirst()
+                .orElseThrow(() -> new IOException(ErrorCode.RECIPIENT_OFFLINE + ": RECIPIENT_OFFLINE"));
+        InetAddress address = InetAddress.getByName(user.ip());
+        return new PeerEndpoint(user.userID(), user.username(),
+                new InetSocketAddress(address, user.tcpPort()),
+                new InetSocketAddress(address, user.fileUdpPort()));
+    }
+
     /** Demo/test switch: keep TCP open but stop heartbeat to simulate a silent network failure. */
     public void setHeartbeatsEnabled(boolean enabled) { heartbeatsEnabled = enabled; }
 
     private Packet control(String type, String expected, int sender, Object body) throws IOException {
         Packet request = ControlPackets.create(type, nextSequence(), sender, 0, body);
-        PacketIO.writePacket(tcp.getOutputStream(), request);
-        Packet response = PacketIO.readPacket(tcp.getInputStream());
-        if (response == null) { login = null; throw new IOException("Server closed the connection"); }
+        CompletableFuture<Packet> future = new CompletableFuture<>();
+        int reference = request.getHeader().getSequenceNumber();
+        pendingTCP.put(reference, future);
+        Packet response;
+        try {
+            if (closed) throw new IOException("Connection is closed; reconnect");
+            PacketIO.writePacket(tcp.getOutputStream(), request);
+            response = future.get(5, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            close();
+            throw new IOException("Control request interrupted", e);
+        } catch (ExecutionException | TimeoutException | IOException e) {
+            close();
+            throw new IOException("Control connection failed; reconnect", e);
+        } finally {
+            pendingTCP.remove(reference);
+        }
         if (response.getHeader().getSenderID() != 0 || response.getHeader().getStreamID() != 0
                 || response.getHeader().getSequenceNumber() != request.getHeader().getSequenceNumber()) {
             throw new IOException("Unmatched control response");
@@ -129,11 +162,31 @@ public final class AccountClient implements AutoCloseable {
         return response;
     }
 
+    private void receiveControlLoop() {
+        try {
+            Packet response;
+            while (!closed && (response = PacketIO.readPacket(tcp.getInputStream())) != null) {
+                PacketHeader header = response.getHeader();
+                if (header.getSenderID() != 0 || header.getStreamID() != 0 || header.getFlags() != 0) {
+                    throw new IOException("Invalid control response header");
+                }
+                CompletableFuture<Packet> future = pendingTCP.get(header.getSequenceNumber());
+                if (future == null) throw new IOException("Unexpected control response");
+                future.complete(response);
+            }
+        } catch (IOException e) {
+            // EOF/reset/timeout closes the local session even if the UI sends no more requests.
+        } finally {
+            close();
+        }
+    }
+
     private Packet requestUDP(Packet request) throws IOException {
         int reference = request.getHeader().getSequenceNumber();
         CompletableFuture<Packet> future = new CompletableFuture<>();
         pending.put(reference, future);
         try {
+            if (closed) throw new IOException("Connection is closed; reconnect");
             for (int attempt = 0; attempt < 3; attempt++) {
                 UdpPacketIO.sendPacket(udp, serverUDP, request);
                 try {
@@ -159,7 +212,7 @@ public final class AccountClient implements AutoCloseable {
         Login current = login;
         if (closed || current == null || !heartbeatsEnabled) return;
         try {
-            long counter = heartbeatSequence.incrementAndGet();
+            long counter = current.heartbeatSequence().incrementAndGet();
             if (counter > 0xFFFF_FFFFL) return; // Session renewal is required at counter exhaustion.
             UdpPacketIO.sendPacket(udp, serverUDP, ControlPackets.create(MessageType.HEARTBEAT,
                     nextSequence(), current.userID(), 0, new Heartbeat(current.token(), counter)));
@@ -177,8 +230,14 @@ public final class AccountClient implements AutoCloseable {
                         || packet.getHeader().getReceiverID() != current.userID()
                         || packet.getHeader().getStreamID() != 0 || packet.getHeader().getFlags() != 0) continue;
                 if (packet.getHeader().getMessageType() == Integer.decode(MessageType.PRESENCE_UPDATE)) {
-                    try { presenceListener.accept(JsonPayloadCodec.decode(packet.getPayload(), PresenceUpdate.class)); }
-                    catch (RuntimeException ignored) { /* UI callbacks must not kill the receive loop. */ }
+                    PresenceUpdate update = JsonPayloadCodec.decode(packet.getPayload(), PresenceUpdate.class);
+                    try {
+                        callbacks.execute(() -> {
+                            if (closed || login != current) return;
+                            try { presenceListener.accept(update); }
+                            catch (RuntimeException ignored) { /* Isolate UI callback failures. */ }
+                        });
+                    } catch (RejectedExecutionException ignored) { /* Client is closing. */ }
                 } else {
                     CompletableFuture<Packet> future = pending.get(packet.getHeader().getSequenceNumber());
                     if (future != null) future.complete(packet);
@@ -216,12 +275,17 @@ public final class AccountClient implements AutoCloseable {
 
     @Override
     public void close() {
-        closed = true;
-        login = null;
+        synchronized (stateLock) {
+            if (closed) return;
+            closed = true;
+            login = null;
+        }
         heartbeat.shutdownNow();
         udp.close();
         try { tcp.close(); } catch (IOException ignored) { }
         pending.values().forEach(f -> f.completeExceptionally(new IOException("Client is closed")));
+        pendingTCP.values().forEach(f -> f.completeExceptionally(new IOException("Client is closed")));
         receiver.shutdownNow();
+        callbacks.shutdownNow();
     }
 }

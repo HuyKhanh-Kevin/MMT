@@ -95,4 +95,47 @@ class SessionRegistryTest {
             assertEquals(1, registry.onlinePeers().size());
         } finally { pool.shutdownNow(); }
     }
+
+    @Test void tcpSessionGuardRejectsWrongTokenUserConnectionAndExpiredSession() throws Exception {
+        UUID connection = UUID.randomUUID();
+        var session = registry.login(alice, ip, 5001, 6001, connection);
+        assertEquals(1, registry.authenticateTcp(session.sessionID(), 1, connection).userID());
+        assertThrows(AccountException.class, () -> registry.authenticateTcp("wrong", 1, connection));
+        assertThrows(AccountException.class, () -> registry.authenticateTcp(session.sessionID(), 2, connection));
+        assertThrows(AccountException.class, () -> registry.authenticateTcp(session.sessionID(), 1, UUID.randomUUID()));
+        now.set(Duration.ofSeconds(15).toNanos());
+        assertThrows(AccountException.class, () -> registry.authenticateTcp(session.sessionID(), 1, connection));
+    }
+
+    @Test void expiredConnectionCannotReloginWhileItsSocketIsWaitingToClose() throws Exception {
+        UUID connection = UUID.randomUUID();
+        registry.login(alice, ip, 5001, 6001, connection);
+        now.set(Duration.ofSeconds(15).toNanos());
+        registry.expire();
+        registry.drainDisconnectedConnections();
+        assertEquals("SESSION_EXPIRED_RECONNECT", assertThrows(AccountException.class,
+                () -> registry.login(alice, ip, 5001, 6001, connection)).getMessage());
+        var newLogin = registry.login(alice, ip, 5002, 6002, UUID.randomUUID());
+        registry.disconnect(connection); // Old connection cleanup cannot delete the new session.
+        assertEquals(newLogin.peer(), registry.findOnlineUser(1).orElseThrow());
+    }
+
+    @Test void reloginReplacesIpAndBothPortsAndResetsUdpBinding() throws Exception {
+        UUID oldConnection = UUID.randomUUID();
+        var first = registry.login(alice, ip, 5001, 6001, oldConnection);
+        registry.heartbeat(first.sessionID(), 1, 100, udp);
+        registry.logout(first.sessionID(), 1, oldConnection);
+        InetAddress newIP = InetAddress.getByName("192.0.2.2");
+        UUID newConnection = UUID.randomUUID();
+        var second = registry.login(alice, newIP, 5010, 6010, newConnection);
+        var newUDP = new InetSocketAddress(newIP, 7010);
+        registry.heartbeat(second.sessionID(), 1, 1, newUDP);
+        var peer = registry.findOnlineUser(1).orElseThrow();
+        assertEquals("192.0.2.2", peer.ip());
+        assertEquals(5010, peer.tcpPort());
+        assertEquals(6010, peer.fileUdpPort());
+        assertEquals(newUDP, peer.presenceEndpoint());
+        assertThrows(AccountException.class, () -> registry.discover(first.sessionID(), 1, udp));
+        assertThrows(AccountException.class, () -> registry.discover(second.sessionID(), 1, udp));
+    }
 }

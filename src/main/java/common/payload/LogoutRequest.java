@@ -10,6 +10,7 @@ public class LogoutRequest {
         this.sessionID = sessionID;
     }
 
+    @JsonProperty("session_id")
     public String getSessionID() {
         return sessionID;
     }

@@ -7,6 +7,7 @@ import java.util.List;
 
 public final class UserListResponse {
     private final List<UserInfo> users;
+    @JsonProperty("next_cursor") private String nextCursor;
 
     @JsonCreator
     public UserListResponse(
@@ -23,4 +24,11 @@ public final class UserListResponse {
     public List<UserInfo> getUsers() {
         return users;
     }
+
+    public UserListResponse(List<UserInfo> users, String nextCursor) {
+        this(users);
+        this.nextCursor = nextCursor;
+    }
+
+    public String getNextCursor() { return nextCursor; }
 }

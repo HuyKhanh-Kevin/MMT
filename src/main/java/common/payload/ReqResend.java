@@ -1,4 +1,4 @@
-package common.payload;
+package src.main.java.common.payload;
 
 import java.util.List;
 

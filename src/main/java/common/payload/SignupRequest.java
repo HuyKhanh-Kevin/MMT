@@ -1,4 +1,4 @@
-package common.payload;
+package src.main.java.common.payload;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;

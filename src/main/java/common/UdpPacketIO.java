@@ -1,4 +1,4 @@
-package common;
+package src.main.java.common;
 
 import java.io.IOException;
 import java.net.DatagramPacket;

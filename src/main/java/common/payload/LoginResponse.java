@@ -1,10 +1,10 @@
-package common.payload;
+package src.main.java.common.payload;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 public class LoginResponse {
-    private final boolean status;
+    private final String status;
     private final String sessionID;
     private final Long userID;
     private final String reason;
@@ -12,12 +12,12 @@ public class LoginResponse {
 
     @JsonCreator 
     public LoginResponse(
-        @JsonProperty("status") boolean status, 
+        @JsonProperty("status") String status,
         @JsonProperty("session_id") String sessionID, 
         @JsonProperty("user_id") Long userID, 
         @JsonProperty("reason") String reason
     ){
-        if (status) {
+        if (status.equals("success")) {
             if (sessionID == null || sessionID.isBlank()) {
                 throw new IllegalArgumentException("Session ID is required");
             }
@@ -30,7 +30,7 @@ public class LoginResponse {
                 throw new IllegalArgumentException("Failure reason is required");
             }
         }
-        if(status == false){
+        if(status.equals("failed")) {
             this.status = status;
             this.sessionID = null;
             this.userID = null;
@@ -44,7 +44,7 @@ public class LoginResponse {
         }
     }
 
-    public boolean isStatus() {
+    public String getStatus() {
         return status;
     }
 

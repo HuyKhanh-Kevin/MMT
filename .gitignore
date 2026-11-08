@@ -1,5 +1,5 @@
 # Maven build output
-
+target/
 
 # Compiled Java files
 *.class
@@ -15,7 +15,7 @@
 # OS-generated files
 .DS_Store
 Thumbs.db
-
+/target/
 /.tools/
 /data/
 /branch/

@@ -171,6 +171,11 @@ class Response():
         elif main_type == 'application':
             base_dir = BASE_DIR+"apps/"
             self.headers['Content-Type']='application/{}'.format(sub_type)
+        elif main_type == 'audio':
+        elif main_type == 'video':
+        elif main_type == 'multipart': # NOTE: may not neccessary
+        elif main_type == 'font': # NOTE: may not neccessary
+        elif main_type == 'model': # NOTE: may not neccessary
         #
         #  TODO: process other mime_type
         #        application/xml       
@@ -294,7 +299,11 @@ class Response():
         elif mime_type == 'application/json' or mime_type == 'application/octet-stream':
             base_dir = self.prepare_content_type(mime_type = 'application/json')
             envelop_content = ""
-
+        elif mime_type == 'audio':
+        elif mime_type == 'video':
+        elif mime_type == 'multipart':
+        elif mime_type == 'font':
+        elif mime_type == 'model':
         #
         # TODO: add support objects
         #

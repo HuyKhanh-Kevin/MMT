@@ -75,8 +75,9 @@ public class UDP {
         DatagramSocket socket = new DatagramSocket();
         Packet[] packets = new Packet[totalPackets];
         
-        byte seqNum = 0x01;
-        for(int i = 0; i < totalPackets; i++) {
+        byte seqNum = 0x00;
+        int i = 0;
+        while(i < totalPackets) {
             DatagramPacket receivedPacket = new DatagramPacket(new byte[24], 24);
             socket.receive(receivedPacket); 
             Packet data = PacketCodec.decode(receivedPacket.getData());
@@ -84,6 +85,7 @@ public class UDP {
             int receivedSeqNum = data.getHeader().getSequenceNumber();
             if (receivedSeqNum == seqNum) {
                 packets[i] =  data;
+                i++;
                 seqNum = (byte) (seqNum == 0x00 ? 0x01 : 0x00);
             }
 

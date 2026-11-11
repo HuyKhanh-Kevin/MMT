@@ -18,6 +18,8 @@ This module provides a Request object to manage and persist
 request settings (cookies, auth, proxies).
 """
 from .dictionary import CaseInsensitiveDict
+import json
+from urllib.parse import parse_qs
 
 class Request():
     """The fully mutable "class" `Request <Request>` object,
@@ -71,6 +73,11 @@ class Request():
         self.routes = {}
         #: Hook point for routed mapped-path
         self.hook = None
+        #: Authorization
+        self.auth = None
+        #: Body size limit
+        self.MAX_BODY_SIZE = 100
+
 
     def extract_request_line(self, request):
         try:
@@ -124,7 +131,7 @@ class Request():
         
         self._raw_headers, self._raw_body = self.fetch_headers_body(request)
         self.headers = self.prepare_headers(self._raw_headers)
-        self.body = self._raw_body
+        self.body = self.prepare_body(self._raw_body)
         print("[Request] Parsed headers: {}".format(self.headers))
 
         #
@@ -148,34 +155,36 @@ class Request():
             #
             #  TODO: implement the cookie function here
             #        by parsing the header            #
+        self.cookies = self.prepare_cookies(cookies)
 
+        auth = self.headers['Authorization']
+        self.auth = self.prepare_auth(auth)
         return
 
-    def prepare_body(self, data, files, json=None):
-        self.prepare_content_length(self.body)
-        self.body = body
-        #
-        # TODO prepare the request authentication
-        #
-	# self.auth = ...
-        return
+    def prepare_body(self, raw_body):
+        self.prepare_content_length(raw_body)
+        if int(self.headers['content-length']) > self.MAX_BODY_SIZE: return
+        
+        contentType = self.headers.get('content-type', '').split(';')[0].strip()
+        match(contentType):
+            case 'application/json':
+                body = json.loads(raw_body)
+            case _:
+                body = raw_body
+        return body
 
 
     def prepare_content_length(self, body):
-        self.headers["Content-Length"] = "0"
-        #
-        # TODO prepare the request authentication
-        #
-	# self.auth = ...
-        return
+        self.headers["Content-Length"] = str(len(body))
+
 
 
     def prepare_auth(self, auth, url=""):
         #
         # TODO prepare the request authentication
         #
-	# self.auth = ...
-        return
+	    # self.auth = ...
+        return tuple(auth.split())
 
     def prepare_cookies(self, cookies):
-            self.headers["Cookie"] = cookies
+        return {c.split('=')[0] : c.split('=')[1] for c in cookies.split('; ')} 

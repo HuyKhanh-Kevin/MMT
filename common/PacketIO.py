@@ -2,9 +2,9 @@
 import socket
 import struct
 
-from common import Packet
-from common import PacketCodec
-from common import ProtocolConstants
+from common.Packet import Packet
+from common.PacketCodec import PacketCodec
+from common.ProtocolConstants import ProtocolConstants
 
 
 class PacketIO:

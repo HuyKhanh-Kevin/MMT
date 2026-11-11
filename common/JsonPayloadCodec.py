@@ -7,7 +7,7 @@ from dataclasses import fields, is_dataclass
 from typing import Any, get_args, get_origin, get_type_hints, Union
 from types import UnionType
 
-from common import ProtocolConstants
+from common.ProtocolConstants import ProtocolConstants
 
 
 def to_snake_case(name: str) -> str:

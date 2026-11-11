@@ -1,16 +1,19 @@
 
 from dataclasses import dataclass
 
+from common.payload.FileID import validate_file_id
+
 
 @dataclass(frozen=True)
 class FileReq:
-    file_id: int
+    file_id: str
     file_name: str
     file_size: int
     total_chunks: int
     checksum: str
 
     def __post_init__(self):
+        validate_file_id(self.file_id)
         if type(self.file_id) is not int or self.file_id < 0:
             raise ValueError("Invalid file ID")
 

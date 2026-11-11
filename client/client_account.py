@@ -132,11 +132,17 @@ class Client:
                 header = packet.getHeader()
 
                 if header.getMessageType() == MessageType.SIGNUP_RESPONSE:
-                    response: SignupResponse = JsonPayloadCodec.decode(packet.getPayload(), SignupResponse)
+                    try:
+                        response: SignupResponse = JsonPayloadCodec.decode(packet.getPayload(), SignupResponse)
+                    except (ValueError, TypeError): continue
+
                     self.listener.display_signup_response(response.get_status(), response.get_reason())
 
                 elif header.getMessageType() == MessageType.LOGIN_RESPONSE:
-                    response: LoginResponse = JsonPayloadCodec.decode(packet.getPayload(), LoginResponse)
+                    try:
+                        response: LoginResponse = JsonPayloadCodec.decode(packet.getPayload(), LoginResponse)
+                    except (ValueError, TypeError): continue
+
                     if response.status == "success":
                         self.id = response.user_id
                         self.session_id = response.session_id
@@ -145,13 +151,19 @@ class Client:
                     self.listener.display_login_response(response.status, response.reason)
 
                 elif header.getMessageType() == MessageType.LOGOUT_RESPONSE:
-                    response: LogoutResponse = JsonPayloadCodec.decode(packet.getPayload(), LogoutResponse)
+                    try:
+                        response: LogoutResponse = JsonPayloadCodec.decode(packet.getPayload(), LogoutResponse)
+                    except (ValueError, TypeError): continue
+
                     if response.status == "success":
                         self.close_connection()
                     self.listener.display_logout_response(response.status)
 
                 elif header.getMessageType() == MessageType.CHAT_MESSAGE:
-                    response: ChatMessage = JsonPayloadCodec.decode(packet.getPayload(), ChatMessage)
+                    try:
+                        response: ChatMessage = JsonPayloadCodec.decode(packet.getPayload(), ChatMessage)
+                    except (ValueError, TypeError): continue
+
                     self.listener.display_message(header.getSenderID(), response.text)
 
         except (OSError, EOFError) as error:
@@ -199,7 +211,11 @@ class Client:
 
     def create_signup_packet(self, username: str, password: str) -> Packet:
         signup_request = SignupRequest(username, password)
-        payload = JsonPayloadCodec.encode(signup_request)
+        try:
+            payload = JsonPayloadCodec.encode(signup_request)
+        except ValueError as error:
+            print(f"Signup error: {error}")
+            raise
         header = PacketHeader(int(ProtocolConstants.PROTOCOL_VERSION), MessageType.SIGNUP_REQUEST, 0, self.get_outgoing_stream(0), self.next_tcp_sequence(), len(payload), 0, 0)
         return Packet(header, payload)
 
@@ -207,7 +223,11 @@ class Client:
         if self.authenticated:
             raise RuntimeError("You are already logged in")
         login_request = LoginRequest(username, password, self.peer_tcp_port, self.file_udp_port)
-        payload = JsonPayloadCodec.encode(login_request)
+        try:
+            payload = JsonPayloadCodec.encode(login_request)
+        except ValueError as error:
+            print(f"Login error: {error}")
+            raise
         header = PacketHeader(int(ProtocolConstants.PROTOCOL_VERSION), MessageType.LOGIN_REQUEST, 0, self.get_outgoing_stream(0), self.next_tcp_sequence(), len(payload), 0, 0)
         return Packet(header, payload)
 
@@ -215,7 +235,11 @@ class Client:
         if not self.authenticated:
             raise RuntimeError("You must login before logout")
         logout_request = LogoutRequest(self.session_id)
-        payload = JsonPayloadCodec.encode(logout_request)
+        try:
+            payload = JsonPayloadCodec.encode(logout_request)
+        except ValueError as error:
+            print(f"Logout error: {error}")
+            raise
         header = PacketHeader(int(ProtocolConstants.PROTOCOL_VERSION), MessageType.LOGOUT_REQUEST, 0, self.get_outgoing_stream(0), self.next_tcp_sequence(), len(payload), self.id, 0)
         return Packet(header, payload)
 
@@ -223,7 +247,11 @@ class Client:
         if not self.authenticated:
             raise RuntimeError("You must login before requesting user list")
         user_list_request = UserListRequest(self.session_id, cursor)
-        payload = JsonPayloadCodec.encode(user_list_request)
+        try:
+            payload = JsonPayloadCodec.encode(user_list_request)
+        except ValueError as error:
+            print(f"User list error: {error}")
+            raise
         header = PacketHeader(int(ProtocolConstants.PROTOCOL_VERSION), MessageType.USER_LIST_REQUEST, 0, self.get_outgoing_stream(0), self.next_udp_sequence(), len(payload), self.id, 0)
         return Packet(header, payload)
 
@@ -231,7 +259,11 @@ class Client:
         if not self.authenticated:
             raise RuntimeError("You must login before sending messages")
         chat_message = ChatMessage(message)
-        payload = JsonPayloadCodec.encode(chat_message)
+        try:
+            payload = JsonPayloadCodec.encode(chat_message)
+        except ValueError as error:
+            print(f"Private chat message error: {error}")
+            raise
         header = PacketHeader(int(ProtocolConstants.PROTOCOL_VERSION), MessageType.CHAT_MESSAGE, 0, self.get_outgoing_stream(receiver), self.next_tcp_sequence(), len(payload), self.id, receiver)
         return Packet(header, payload)
 
@@ -239,13 +271,21 @@ class Client:
         if not self.authenticated:
             raise RuntimeError("You must login before sending messages")
         chat_message = ChatMessage(message)
-        payload = JsonPayloadCodec.encode(chat_message)
+        try:
+            payload = JsonPayloadCodec.encode(chat_message)
+        except ValueError as error:
+            print(f"Global chat message error: {error}")
+            raise
         header = PacketHeader(int(ProtocolConstants.PROTOCOL_VERSION), MessageType.CHAT_MESSAGE, 0, self.get_outgoing_stream(0), self.next_tcp_sequence(), len(payload), self.id, 0)
         return Packet(header, payload)
 
     def create_heartbeat_packet(self) -> Packet:
         heartbeat = Heartbeat(self.session_id, self.next_heartbeat_sequence())
-        payload = JsonPayloadCodec.encode(heartbeat)
+        try:
+            payload = JsonPayloadCodec.encode(heartbeat)
+        except ValueError as error:
+            print(f"Heartbeat error: {error}")
+            raise
         header = PacketHeader(int(ProtocolConstants.PROTOCOL_VERSION), MessageType.HEARTBEAT, 0, self.get_outgoing_stream(0), self.next_udp_sequence(), len(payload), self.id, 0)
         return Packet(header, payload)
 

@@ -15,9 +15,10 @@ def main():
 
     args = parser.parse_args()
 
-    client = Client(args.server_ip, args.server_port, args.udp_port, args.peer_tcp_port, args.file_udp_port)
+    client = None
 
     try:
+        client = Client(args.server_ip, args.server_port, args.udp_port, args.peer_tcp_port, args.file_udp_port)
         console = Console(client)
         client.set_listener(console)
 
@@ -28,7 +29,8 @@ def main():
     except OSError as error:
         print(f"Connection error: {error}")
     finally:
-        client.close_connection()
+        if client is not None:
+            client.close_connection()
 
 if __name__ == '__main__':
     main()

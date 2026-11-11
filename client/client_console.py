@@ -8,7 +8,7 @@ class Console(Listener):
 
     def display_menu(self):
         print("Choose one of the options")
-        if not self.client.get_authenticated:
+        if not self.client.get_authenticated():
             print("1. Signup")
             print("2. Login")
             print("3. Exit")
@@ -19,11 +19,11 @@ class Console(Listener):
             print("4. Logout")
 
     def start_sending(self):
-        while self.client.get_running:
+        while self.client.get_running():
             self.display_menu()
             command = input("Choose one of the options: ")
-            if not self.client.get_running: break
-            if self.client.get_authenticated:
+            if not self.client.get_running(): break
+            if self.client.get_authenticated():
                 if command == "1":
                     packet = self.client.create_user_list_packet()
                     self.client.send_udp_packet(packet)

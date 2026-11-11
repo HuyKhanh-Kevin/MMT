@@ -134,18 +134,26 @@ class Client:
                 if header.getMessageType() == MessageType.SIGNUP_RESPONSE:
                     response: SignupResponse = JsonPayloadCodec.decode(packet.getPayload(), SignupResponse)
                     self.listener.display_signup_response(response.get_status(), response.get_reason())
+
                 elif header.getMessageType() == MessageType.LOGIN_RESPONSE:
                     response: LoginResponse = JsonPayloadCodec.decode(packet.getPayload(), LoginResponse)
                     if response.status == "success":
                         self.id = response.user_id
                         self.session_id = response.session_id
+                        self.authenticated = True
+                        self.start_heartbeat()
                     self.listener.display_login_response(response.status, response.reason)
+
                 elif header.getMessageType() == MessageType.LOGOUT_RESPONSE:
                     response: LogoutResponse = JsonPayloadCodec.decode(packet.getPayload(), LogoutResponse)
+                    if response.status == "success":
+                        self.close_connection()
                     self.listener.display_logout_response(response.status)
+
                 elif header.getMessageType() == MessageType.CHAT_MESSAGE:
                     response: ChatMessage = JsonPayloadCodec.decode(packet.getPayload(), ChatMessage)
                     self.listener.display_message(header.getSenderID(), response.text)
+
         except (OSError, EOFError) as error:
             if self.running:
                 print(f"TCP receive error: {error}")
@@ -161,6 +169,7 @@ class Client:
 
                 if packet is None or source != self.server_udp_address:
                     continue
+
             except socket.timeout:
                 continue
             except OSError as error:

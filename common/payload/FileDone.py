@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 @dataclass(frozen=True)
-class FileAccept:
+class FileDone:
     file_id: str
     def __post_init__(self):
         if not isinstance(self.file_id, str):

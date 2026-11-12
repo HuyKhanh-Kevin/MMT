@@ -105,16 +105,12 @@ class Client:
     def close_connection(self) -> None:
         self.authenticated = False
         self.running = False
-
         self.stop_event.set()
-
         self.udp_socket.close()
-
         try:
             self.tcp_socket.shutdown(socket.SHUT_RDWR)
         except OSError:
             pass
-
         self.tcp_socket.close()
 
     def start_receiving(self) -> None:

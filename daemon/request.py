@@ -157,8 +157,9 @@ class Request():
             #        by parsing the header            #
         self.cookies = self.prepare_cookies(cookies)
 
-        auth = self.headers['Authorization']
-        self.auth = self.prepare_auth(auth)
+        auth = self.headers.get('Authorizaion')
+        if not auth == None:
+            self.auth = self.prepare_auth(auth)
         return
 
     def prepare_body(self, raw_body):
@@ -187,4 +188,7 @@ class Request():
         return tuple(auth.split())
 
     def prepare_cookies(self, cookies):
-        return {c.split('=')[0] : c.split('=')[1] for c in cookies.split('; ')} 
+        cookieArray = cookies.split('; ')
+        if len(cookieArray) < 1: return {}
+        return {}
+        # return {c.split('=')[0] : c.split('=')[1] for c in cookieArray} 

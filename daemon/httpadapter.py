@@ -133,7 +133,18 @@ class HttpAdapter:
                 #
                 # TODO: handle for App hook here
                 #
-                response = b""
+                
+                payload = req.hook(headers=req.headers, body=req.body)
+                if inspect.isawaitable(payload):
+                    payload = asyncio.run(payload)
+                header = (
+                    "HTTP/1.1 200 OK\r\n"
+                    "Content-Type: application/json\r\n"
+                    f"Content-Length: {len(payload)}\r\n"
+                    "Connection: close\r\n\r\n"
+                )
+                response = header.encode("ascii") + payload
+                # response = b""
             else:
                 # Build response
                 response = resp.build_response(req)
@@ -258,7 +269,7 @@ class HttpAdapter:
         :rtype: cookies - A dictionary of cookie key-value pairs.
         """
         cookies = {}
-        for header in headers:
+        for header in self.headers:
             if header.startswith("Cookie:"):
                 cookie_str = header.split(":", 1)[1].strip()
                 for pair in cookie_str.split(";"):
@@ -286,7 +297,7 @@ class HttpAdapter:
             response.url = req.url
 
         # Add new cookies from the server.
-        response.cookies = extract_cookies(req)
+        response.cookies = self.extract_cookies(req)
 
         # Give the Response some context.
         response.request = req

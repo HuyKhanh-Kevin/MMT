@@ -24,7 +24,7 @@ import os
 import importlib.util
 import json
 
-from   daemon import StreapRous
+from  daemon import StreapRous
 
 app = StreapRous()
 
@@ -51,7 +51,7 @@ def echo(headers="guest", body="anonymous"):
     print("[SampleApp] received body {}".format(body))
 
     try:
-        message = json.loads(body)
+        message = json.loads(json.dumps(body))
         data = {"received": message }
         # Convert to JSON string
         json_str = json.dumps(data)

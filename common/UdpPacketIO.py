@@ -2,9 +2,9 @@
 import socket
 from dataclasses import dataclass
 
-from .packet import Packet
-from .packet_codec import PacketCodec
-from .protocol_constants import ProtocolConstants
+from common.Packet import Packet
+from common.PacketCodec import PacketCodec
+from common.ProtocolConstants import ProtocolConstants
 
 
 @dataclass(frozen=True)

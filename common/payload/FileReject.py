@@ -1,5 +1,6 @@
+from dataclasses import dataclass
+
 from common.payload.FileID import validate_file_id
-from dataclass import dataclass
 
 @dataclass(frozen=True)
 class FileReject:

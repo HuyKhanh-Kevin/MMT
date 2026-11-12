@@ -1,8 +1,8 @@
 
-from common import Packet
-from common import PacketHeader
-from common import ProtocolConstants
-from common import JsonPayloadCodec
+from common.JsonPayloadCodec import JsonPayloadCodec
+from common.Packet import Packet
+from common.PacketHeader import PacketHeader
+from common.ProtocolConstants import ProtocolConstants
 
 
 class ControlPackets:
@@ -23,7 +23,7 @@ class ControlPackets:
         message_type = int(type, 0)
 
         header = PacketHeader(
-            ProtocolConstants.VERSION,
+            ProtocolConstants.PROTOCOL_VERSION,
             message_type,
             0,               # flags
             0,               # streamID (control stream)

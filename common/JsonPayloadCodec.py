@@ -73,7 +73,12 @@ def validate_type(value, expected, allow_null=False):
     """Validate types without implicit scalar conversion."""
 
     if value is None:
-        if allow_null:
+        origin = get_origin(expected)
+        args = get_args(expected)
+        if allow_null or (
+            origin in (Union, UnionType)
+            and type(None) in args
+        ):
             return None
         raise ValueError("Null creator property is not allowed")
 
@@ -100,6 +105,20 @@ def validate_type(value, expected, allow_null=False):
             validate_type(item, args[0])
             for item in value
         ] if args else value
+
+    if origin is tuple:
+        if not isinstance(value, list):
+            raise TypeError("Expected JSON array")
+        if not args:
+            return tuple(value)
+        if len(args) == 2 and args[1] is Ellipsis:
+            return tuple(validate_type(item, args[0]) for item in value)
+        if len(value) != len(args):
+            raise ValueError("Tuple length does not match expected type")
+        return tuple(
+            validate_type(item, item_type)
+            for item, item_type in zip(value, args)
+        )
 
     if origin is dict:
         if not isinstance(value, dict):
@@ -251,11 +270,4 @@ class JsonPayloadCodec:
         if not isinstance(data, dict):
             raise ValueError("JSON payload must be an object")
 
-        # Preserve the Java LoginResponse special case.
-        # For stricter identity matching, compare with the
-        # actual imported LoginResponse class.
-        allow_null = target_type.__name__ == "LoginResponse"
-
-        return construct_object(
-            data, target_type, allow_null=allow_null
-        )
+        return construct_object(data, target_type)

@@ -14,24 +14,24 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable
 
-from common.control_packets import ControlPackets
-from common.json_payload_codec import JsonPayloadCodec
-from common.message_type import MessageType
-from common.packet import Packet
-from common.packet_io import PacketIO
-from common.udp_packet_io import UdpPacketIO
-from common.payload.error_payload import ErrorPayload
-from common.payload.heartbeat import Heartbeat
-from common.payload.login_request import LoginRequest
-from common.payload.login_response import LoginResponse
-from common.payload.logout_request import LogoutRequest
-from common.payload.presence_update import PresenceUpdate
-from common.payload.signup_request import SignupRequest
-from common.payload.signup_response import SignupResponse
-from common.payload.user_info import UserInfo
-from common.payload.user_list_request import UserListRequest
-from common.payload.user_list_response import UserListResponse
-from client.peer_endpoint import PeerEndpoint
+from common.ControlPackets import ControlPackets
+from common.JsonPayloadCodec import JsonPayloadCodec
+from common.MessageType import MessageType
+from common.Packet import Packet
+from common.PacketIO import PacketIO
+from common.UdpPacketIO import UdpPacketIO
+from common.payload.ErrorPayload import ErrorPayload
+from common.payload.Heartbeat import Heartbeat
+from common.payload.LoginRequest import LoginRequest
+from common.payload.LoginResponse import LoginResponse
+from common.payload.LogoutRequest import LogoutRequest
+from common.payload.PresenceUpdate import PresenceUpdate
+from common.payload.SignupRequest import SignupRequest
+from common.payload.SignupResponse import SignupResponse
+from common.payload.UserInfo import UserInfo
+from common.payload.UserListRequest import UserListRequest
+from common.payload.UserListResponse import UserListResponse
+from client.PeerEndpoint import PeerEndpoint
 
 
 @dataclass

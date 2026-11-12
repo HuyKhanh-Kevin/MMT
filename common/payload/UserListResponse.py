@@ -2,7 +2,7 @@
 from dataclasses import dataclass, field
 from typing import Sequence
 
-from .user_info import UserInfo
+from common.payload.UserInfo import UserInfo
 
 
 @dataclass(frozen=True)

@@ -9,6 +9,7 @@ from common.ProtocolConstants import ProtocolConstants
 class FileIO:
     def __init__(self):
         self.source = None
+        self.destination = None
         self.lock = threading.Lock()
 
     def open_source(self, file_path: str) -> tuple[str, int]:
@@ -62,3 +63,50 @@ class FileIO:
             if self.source is not None:
                 self.source.close()
                 self.source = None
+
+    def open_destination(self, file_path: str) -> None:
+        with self.lock:
+            if self.destination is not None:
+                raise RuntimeError("File is already open")
+
+            self.destination = open(file_path, 'x+b')
+
+    def verify_checksum(self, checksum: str) -> bool:
+        with self.lock:
+            if self.destination is None:
+                raise RuntimeError("No file is currently open")
+
+            original_position: int = self.destination.tell()
+            try:
+                self.destination.seek(0)
+                hasher = hashlib.sha256()
+
+                while block := self.destination.read(1024 * 1024):
+                    hasher.update(block)
+
+                return hasher.hexdigest() == checksum
+            finally:
+                self.destination.seek(original_position)
+
+    def write_chunk(self, chunk_index: int, total_chunks: int, file_size: int, chunk_data: bytes) -> None:
+        with self.lock:
+            if not 0 <= chunk_index < total_chunks:
+                raise ValueError("Invalid chunk index")
+
+            if self.destination is None:
+                raise RuntimeError("No file is currently open")
+
+            chunk_size = ProtocolConstants.MAX_CHUNK_DATA_SIZE
+            expected_size = min(chunk_size, file_size - chunk_index * chunk_size)
+
+            if len(chunk_data) != expected_size:
+                raise ValueError("Invalid chunk data length")
+
+            self.destination.seek(chunk_index * chunk_size)
+            self.destination.write(chunk_data)
+
+    def close_destination(self) -> None:
+        with self.lock:
+            if self.destination is not None:
+                self.destination.close()
+                self.destination = None

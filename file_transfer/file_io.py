@@ -4,6 +4,8 @@ import threading
 
 from pathlib import Path
 
+from common.ProtocolConstants import ProtocolConstants
+
 class FileIO:
     def __init__(self):
         self.source = None
@@ -44,18 +46,16 @@ class FileIO:
             finally:
                 self.source.seek(original_position)
 
-    def read_chunk(self, chunk_index: int, chunk_size: int, total_chunks: int) -> bytes:
+    def read_chunk(self, chunk_index: int, total_chunks: int) -> bytes:
         if not 0 <= chunk_index < total_chunks:
             raise ValueError("Invalid chunk index")
-        if chunk_size <= 0:
-            raise ValueError("Invalid chunk size")
 
         with self.lock:
             if self.source is None:
                 raise RuntimeError("No file is currently open")
 
-            self.source.seek(chunk_index * chunk_size)
-            return self.source.read(chunk_size)
+            self.source.seek(chunk_index * ProtocolConstants.MAX_CHUNK_DATA_SIZE)
+            return self.source.read(ProtocolConstants.MAX_CHUNK_DATA_SIZE)
 
     def close_source(self) -> None:
         with self.lock:

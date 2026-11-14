@@ -56,6 +56,7 @@ class Client:
         self.running = True
 
         self.listener : Listener
+        self.file_transfer: FileTransfer
 
         self.counter_lock = threading.Lock()
         self.tcp_sequence_num = 1
@@ -69,8 +70,6 @@ class Client:
         self.stop_event = threading.Event()
         self.heartbeat_thread = None
 
-        self.file_transfer = FileTransfer(self)
-
     def get_authenticated(self) -> bool:
         return self.authenticated
 
@@ -79,6 +78,9 @@ class Client:
 
     def set_listener(self, listener: Listener) -> None:
         self.listener = listener
+
+    def set_file_transfer(self, file_transfer: FileTransfer) -> None:
+        self.file_transfer = file_transfer
 
     def next_tcp_sequence(self) -> int:
         with self.counter_lock:

@@ -1,5 +1,9 @@
 # Common Protocol — 38 test cases
 
+> Tài liệu này mô tả bộ test Java trước khi chuyển sang Python. Mã message và
+> JSON account Python hiện tại được quy định tại [ACCOUNT_PROTOCOL_PYTHON.md](ACCOUNT_PROTOCOL_PYTHON.md);
+> không dùng các ví dụ Java dưới đây làm wire contract cho Python tracker.
+
 Tài liệu chuyển 38 phương thức `@Test` trong bộ CommonProtocolTests sang dạng **Example → Output**. Một test có thể chứa nhiều biến thể đầu vào; các biến thể vẫn thuộc cùng một test.
 
 **Output là kết quả mong đợi của test**, không phải kết quả chạy mới trên branch main. JSON trong output biểu diễn dữ liệu sau giải mã; thứ tự key và khoảng trắng không phải điều kiện so sánh, trừ các test đo kích thước.

@@ -1,191 +1,144 @@
-# Giải thích phần Account Session và Presence của Đồng
+# Account, Session & Presence — phần của Đồng
 
-Phần này xác định người dùng là ai, người đó đang online ở đâu và khi nào cần loại khỏi danh sách. Nó cung cấp endpoint cho các phần chat và truyền file của nhóm.
+Bản Python triển khai đăng ký, đăng nhập, đăng xuất, quản lý phiên, danh sách online,
+heartbeat và peer discovery. Bảng đối chiếu lý thuyết từng chương trong docs/slide
+và wire contract nằm tại [ACCOUNT_PROTOCOL_PYTHON.md](ACCOUNT_PROTOCOL_PYTHON.md).
+Cách chạy: [INTEGRATION_ACCOUNT_SESSION.md](INTEGRATION_ACCOUNT_SESSION.md).
 
-## Các file cần nắm
+## Các thành phần
 
 | File | Trách nhiệm |
 | --- | --- |
-| `server/AccountStore.java` | Kiểm tra username/password, tạo tài khoản, lưu salt/hash và kiểm tra mật khẩu |
-| `server/SessionRegistry.java` | Cấp token, chống đăng nhập đồng thời, quản lý endpoint, heartbeat và trạng thái online |
-| `server/OnlineDirectory.java` | Chia danh sách online thành các trang JSON tối đa 1.100 byte |
-| `server/TrackerServer.java` | Nhận TCP/UDP, gọi các xử lý trên, trả phản hồi và phát presence |
-| `server/AccountRequestHandler.java` | Đầu vào xử lý các request account/discovery để ghép với server |
-| `client/PeerEndpoint.java` | Endpoint TCP và UDP truyền file lấy từ danh sách online |
-| `client/AccountClient.java` | API mẫu cho client chính: signup, login, logout, onlineUsers, onPresence |
-| `client/AccountDemo.java` | Giao diện dòng lệnh để demo phần việc này |
-| `common/payload/` | Dữ liệu JSON cho từng loại gói tin |
-| `src/test/java/server/` | Kiểm thử nghiệp vụ và chạy nhiều client bằng socket thật |
+| server/account_store.py | Validate, PBKDF2, lưu JSON, xác minh mật khẩu |
+| server/account_exception.py | Mã lỗi và lý do nghiệp vụ |
+| server/session_registry.py | Token, kết nối/endpoint, heartbeat, timeout, presence |
+| server/online_directory.py | Snapshot, cursor, phân trang theo byte |
+| server/account_request_handler.py | Kiểm tra packet, dispatch, reply/error cùng reference |
+| server/tracker_server.py | Socket TCP/UDP, các luồng nhận, quét timeout và phát presence |
+| apps/routes/auth_routes.py | Route signup/login/logout qua TCP |
+| apps/routes/tracker_routes.py | Route heartbeat/user list qua UDP |
+| client/AccountClient.py | API, nhận nền, heartbeat, retry, callback |
+| client/Client.py | API client chung, tái sử dụng cùng AccountClient/session/socket |
+| client/account_demo.py | CLI demo |
+| apps/account_sessions.py | Giữ kết nối tracker cho từng phiên trình duyệt, dọn lease hết hạn |
+| apps/routes/account_http_routes.py | API HTTP signup/login/logout/users/session/heartbeat |
+| apps/account_http.py | Host HTTP account qua socket TCP trên localhost |
+| common/payload/ | DTO account và JSON validation |
+| test/server/ | Unit test và integration test socket thật |
 
-Đường dẫn các file Java trong bảng tính từ `src/main/java/`, trừ dòng kiểm thử.
+Payload snake_case tái sử dụng DTO hiện có để tránh hai bộ model khác nhau.
+Riêng module heartbeat được alias trong common/payload/__init__.py vì Windows
+không phân biệt Heartbeat.py và heartbeat.py. Import mới
+`from common.payload.heartbeat import Heartbeat` và import cũ dùng cùng lớp.
+Hai file routes định tuyến **packet**, không phải HTTP endpoints.
+HTTP endpoints nằm riêng trong account_http_routes.py. sampleapp.py dùng cùng
+backend khi được configure_account_sessions(), không còn trả login thành công giả.
 
-## Ba khái niệm dễ nhầm
+## Cách tổ chức đã rút gọn
 
-**Account** là tài khoản lâu dài. Nó gồm username, `user_id`, salt, hash mật khẩu và số vòng hash. Tài khoản vẫn tồn tại khi người dùng offline hoặc server khởi động lại.
+- Message type dùng trực tiếp số nguyên trong common.MessageType, không có lớp
+  chuyển đổi Enum/chuỗi hex riêng ở client.
+- Client xử lý từng request account theo thứ tự. Một hàng đợi nhận reply là đủ;
+  không cần hai bảng Future cho TCP và UDP. Reply vẫn được đối chiếu transport
+  và sequence. Đóng kết nối đánh thức request đang chờ.
+- Server giữ một dictionary session theo token. Với quy mô 10–20 client của đề,
+  tìm user/kết nối bằng vòng lặp rõ ràng, không cần đồng bộ thêm hai bảng chỉ mục.
+- Luồng cập nhật danh sách chỉ khởi động khi UI đăng ký on_users. Client chỉ dùng
+  signup/login/heartbeat không tạo thêm luồng này.
+- Snapshot dùng dict thông thường, không cần OrderedDict.
 
-**Session** là một lần đăng nhập. Server sinh `session_id` ngẫu nhiên 32 byte, mã hóa Base64 URL thành chuỗi 43 ký tự. Mỗi lần login có token mới; token hết hiệu lực sau logout, timeout hoặc đứt kết nối TCP. `user_id` vẫn giữ nguyên.
+Khóa dữ liệu dùng chung, hash mật khẩu, heartbeat/timeout, retry UDP và phân trang
+vẫn cần giữ: chúng giải quyết truy cập đồng thời, xác thực, mất gói và giới hạn
+kích thước packet. Đây là lựa chọn triển khai dựa trên lý thuyết, không phải mọi
+chi tiết đều phải có nguyên mẫu trong slide. Cầu nối HTTP và các API tương thích
+đang có caller/test nên xóa chúng sẽ làm mất chức năng tương ứng.
 
-**Presence** là trạng thái online/offline suy ra từ session. Một tài khoản chỉ có tối đa một session đang hoạt động. Các thao tác trên các bảng phiên được khóa cùng nhau để hai luồng không cùng login thành công cho một tài khoản.
+## Account và lưu trữ
 
-Ví dụ: Alice có `user_id=1`. Lần login đầu nhận token A; logout rồi login lại nhận token B. Gửi heartbeat bằng A sẽ bị từ chối dù `user_id` vẫn là 1.
+Account tồn tại qua lần khởi động lại; session chỉ tồn tại trong RAM.
+Username phân biệt hoa thường, khớp `[A-Za-z0-9_]{1,32}`; password dài 8–128 ký tự
+ASCII in được. Đăng ký không tự login. Signup đồng thời một tên chỉ có một bên
+thành công.
 
-## Luồng đăng ký và đăng nhập
+Password dùng PBKDF2-HMAC-SHA256, salt ngẫu nhiên 16 byte, 210.000 vòng, hash 32 byte;
+so sánh bằng hmac.compare_digest. File mặc định data/python_accounts.json lưu
+user_id, username, salt, password_hash, iterations; không lưu password gốc/token.
+Server ghi file tạm cùng thư mục, flush/fsync, os.replace rồi mới cập nhật RAM.
+File lỗi khiến server từ chối khởi động thay vì tự xóa dữ liệu.
+Một file chỉ dành cho một tiến trình server. Schema Python khác Java; không có
+migration tự động và không giả định tương thích wire giữa hai implementation.
 
-```mermaid
-sequenceDiagram
-    participant C as Client
-    participant S as TrackerServer
-    participant A as AccountStore
-    participant R as SessionRegistry
-    C->>S: TCP SIGNUP_REQUEST(username, password)
-    S->>A: Kiểm tra trùng tên, hash và lưu
-    S-->>C: SIGNUP_RESPONSE success / failed
-    C->>S: TCP LOGIN_REQUEST + tcp_port + file_udp_port
-    S->>A: Xác minh mật khẩu
-    S->>R: Kiểm tra phiên, cấp session_id
-    S-->>C: LOGIN_RESPONSE success + user_id + session_id
-    C->>S: UDP HEARTBEAT đầu tiên
-    S->>R: Ghi địa chỉ UDP thực và last_seen
-    S-->>C: UDP PRESENCE_UPDATE khi người khác đổi trạng thái
-```
+## Session, endpoint và heartbeat
 
-Đăng ký không tự đăng nhập. Khi signup, server kiểm tra username theo `[A-Za-z0-9_]{1,32}`, password gồm 8–128 ký tự ASCII in được. Tên có phân biệt hoa thường: `Alice` và `alice` là hai tài khoản khác nhau.
+Login tạo token ngẫu nhiên 32 byte, URL-safe 43 ký tự. Mỗi account chỉ online một
+phiên. Token gắn với user_id và ID kết nối TCP do server tạo. IP lấy từ socket
+TCP; client chỉ khai cổng peer TCP và file UDP (1–65535). Đây là cổng lắng nghe,
+khác cổng nguồn TCP tạm và socket UDP điều khiển dùng heartbeat/discovery.
 
-Password được hash bằng `PBKDF2WithHmacSHA256`, salt ngẫu nhiên 16 byte, 210.000 vòng, kết quả 32 byte. File tài khoản không lưu password gốc. Khi login, server lấy salt đã lưu, hash password vừa nhận rồi so sánh bằng `MessageDigest.isEqual`.
+Heartbeat đầu chốt IP/cổng UDP nhận presence. Gói sau phải khớp token, user_id,
+IP và cổng; sequence cũ/trùng không gia hạn. Client gửi ngay sau login, định kỳ
+5 giây và trước mỗi lần thử discovery để khôi phục heartbeat đầu bị mất.
+Riêng packet discovery không gia hạn phiên.
 
-Ghi tài khoản dùng file tạm cùng thư mục rồi thay thế file chính, ưu tiên atomic move. Chỉ thêm vào RAM sau khi ghi thành công. Nếu hai client đồng thời signup một tên, server kiểm tra trùng lần nữa sau khi hash; chỉ một client tạo được tài khoản. Không chạy nhiều tiến trình server cùng ghi một file tài khoản.
+Server dùng time.monotonic. Sau 15 giây không nhận heartbeat mới, session hết
+hiệu lực, TCP bị đóng và các client khác nhận offline. Vòng quét chạy mỗi 100 ms;
+xác thực từ chối token hết hạn ngay trước lượt quét. EOF/reset TCP cũng dọn phiên.
+Cleanup idempotent, không tạo hai sự kiện offline.
 
-Khi login thành công, server lưu:
+Logout phải từ đúng TCP đã login. Logout giữ TCP để login lại với token mới;
+token cũ không dùng được. Sau timeout/server disconnect, tạo AccountClient mới.
+Đổi IP/cổng cũng cần phiên mới.
+Thời gian chờ trước login là 120 giây, tùy chỉnh bằng --login-timeout; đây là
+giới hạn khác với hạn heartbeat 15 giây của phiên đã xác thực.
 
-| Dữ liệu | Nguồn và ý nghĩa |
-| --- | --- |
-| `user_id`, username | Tài khoản đã xác thực |
-| `session_id` | Token ngẫu nhiên của lần login |
-| IP | Lấy từ kết nối TCP đang nhận, không nhận IP do client tự khai |
-| `tcp_port` | Cổng client lắng nghe kết nối peer, trong khoảng 1–65535 |
-| `file_udp_port` | Cổng module file nhận UDP, trong khoảng 1–65535 |
-| Kết nối TCP điều khiển | Gắn với phiên để client khác không thể logout hộ |
-| `last_seen` | Thời điểm heartbeat hợp lệ gần nhất, khởi tạo tại login |
-| Endpoint UDP presence | IP/cổng nguồn của heartbeat đầu tiên |
+## Discovery và presence
 
-`tcp_port` là cổng peer đang lắng nghe, khác cổng nguồn tạm của kết nối client → server. `file_udp_port` là cổng truyền file, khác socket UDP dùng heartbeat/discovery. Nếu cần đổi cổng đã đăng ký, logout và login lại.
+Danh sách bao gồm người yêu cầu, chứa user_id, username, status, IP, hai cổng peer,
+không chứa token. Phân trang theo JSON thực tối đa 1.100 byte; packet tối đa 1.200
+byte. Cursor thuộc snapshot bất biến của session, TTL 30 giây, tối đa 4 snapshot
+mỗi session. Retry cùng reference trang đầu nhận lại cùng nội dung.
+Cursor sai/hết hạn/khác session trả ERROR 1003 / INVALID_CURSOR; ứng dụng có thể
+gọi lại online_users() để bắt đầu snapshot mới.
+Client hiện tự bắt đầu lại toàn bộ snapshot một lần khi nhận INVALID_CURSOR;
+nếu tiếp tục lỗi thì báo ra ngoài, không lặp vô hạn hoặc ghép hai snapshot.
 
-Login sai tài khoản/mật khẩu trả `failed / INVALID_CREDENTIALS`; tài khoản đang online trả `failed / ALREADY_ONLINE`; cổng ngoài miền hợp lệ trả `failed / INVALID_PORT`. JSON thiếu trường, sai kiểu hoặc header sai trả gói `ERROR`.
+Client thử mỗi trang tối đa 3 lần, mỗi lần chờ 1 giây; online_users() trả đủ trang.
+Discovery trước heartbeat nhận HEARTBEAT_REQUIRED; client gửi heartbeat rồi thử
+lại trong cùng giới hạn. Presence mang username và status online/offline, phát
+UDP unicast tới các session khác đã đăng ký endpoint. UDP có thể mất/trễ/đảo thứ
+tự; UI nên tải lại danh sách để xác nhận trạng thái.
+on_users(callback) thực hiện việc này: tải đủ danh sách khi có presence và mỗi
+5 giây, kể cả lúc thông báo UDP bị mất. Logout/mất kết nối xóa danh sách của UI.
+Presence chỉ là gợi ý có thay đổi, không được dùng để khẳng định peer nhận được file.
 
-## Heartbeat và phát hiện offline
+## Lỗi và tích hợp
 
-Client gửi UDP heartbeat ngay sau login, rồi mỗi 5 giây:
+Signup/login lỗi nghiệp vụ trả status=failed và reason: USERNAME_TAKEN,
+INVALID_CREDENTIALS, ALREADY_ONLINE. JSON sai/thiếu/thừa trường, cổng không hợp lệ,
+header/transport sai trả ERROR 1003. Token/user/endpoint/TCP sai trả ERROR 1004.
+Key optional vẫn hiện diện với giá trị null theo codec Python.
+TCP framing sai đóng kết nối; UDP không giải mã được bị loại.
+JSON sai trong frame đầy đủ nhận error, kết nối vẫn xử lý request tiếp theo.
 
-```json
-{"session_id":"token_cua_phien","heartbeat_seq":1}
-```
+Server tích hợp AccountRequestHandler.handle_tcp/handle_udp phải xử lý cả EOF,
+expire, đóng TCP hết hạn và phát presence; TrackerServer đã cung cấp vòng đời này.
+SessionRegistry.find_online_user(user_id), online_peers() trả bản sao bất biến
+không chứa token. AccountClient.peer_endpoint(user_id) lấy endpoint mới hoặc báo
+RECIPIENT_OFFLINE. Callback on_presence chạy riêng nên gọi được online_users();
+GUI cần chuyển thao tác vẽ về luồng UI.
 
-Server kiểm tra đồng thời token còn hạn, `sender_id` đúng tài khoản, IP nguồn trùng IP khi login và cổng UDP nguồn khớp cổng đã được ghi nhận. Heartbeat đầu tiên chốt endpoint UDP; những heartbeat sau không được tự đổi cổng.
+Client.py kế thừa AccountClient, không có session hoặc heartbeat thứ hai.
+API create_*_packet/send_*_packet cho account vẫn dùng được, nhưng send chờ
+phản hồi đã đối chiếu; start_receiving() không tạo thêm luồng đọc.
+Các callback chat hiện có được phân luồng khỏi phản hồi account, chưa bổ sung
+chat routing vào tracker. Các handler chat/file khác vẫn cần dispatcher riêng.
 
-`heartbeat_seq` tăng từ 1, tối đa 4.294.967.295. Gói trùng hoặc đến muộn không được cập nhật thời gian sống. Chỉ heartbeat hợp lệ và có sequence mới làm mới deadline; yêu cầu danh sách online không kéo dài phiên.
+Backend HTTP chạy trên máy peer và giữ TCP/UDP qua nhiều HTTP request. Browser
+nhận access_token riêng, không nhận token tracker. Gửi Bearer token ở request
+tiếp theo và heartbeat/poll mỗi 5 giây; 15 giây không có hoạt động sẽ đóng client
+native để tránh treo online khi đóng trình duyệt. Chỉ công bố cổng listener native
+thực trên máy bridge; browser ở máy khác không trở thành peer qua bridge này.
 
-Đồng hồ đo hạn dùng `System.nanoTime`, tránh thay đổi giờ hệ thống làm sai timeout. Trường `last_seen` dùng `Instant` để quan sát. Nếu đủ 15 giây kể từ heartbeat cuối, server loại session, đóng TCP điều khiển và gửi presence offline cho các client khác. Vòng quét chạy mỗi 100 ms; xác thực cũng từ chối token đã hết hạn ngay cả trước lượt quét.
-
-Khi TCP đóng/reset, server dọn phiên ngay khi đọc được EOF/lỗi. Nếu đường truyền hỏng im lặng và TCP chưa báo lỗi, heartbeat timeout vẫn dọn được. Các thao tác dọn là idempotent: timeout và TCP đóng cùng lúc không tạo hai sự kiện offline.
-
-Khi `heartbeat_seq` hết miền số, cần tạo phiên mới; token đã hết hạn không được khôi phục bằng heartbeat đến muộn.
-
-## Danh sách online và presence
-
-Client gửi `USER_LIST_REQUEST` bằng UDP, từ cùng socket gửi heartbeat:
-
-```json
-{"session_id":"token_cua_phien","cursor":null}
-```
-
-Phản hồi có endpoint để module chat/file dùng:
-
-```json
-{"users":[{"username":"alice","status":"online","user_id":1,"ip":"127.0.0.1","tcp_port":5001,"file_udp_port":6001}],"next_cursor":null}
-```
-
-Nếu danh sách dài, `next_cursor` chứa mã trang tiếp theo. Client gửi lại `session_id` và cursor này cho tới khi nhận `next_cursor=null`. Không cắt bớt người dùng để ép gói vừa kích thước.
-
-Mỗi chuỗi trang dùng một snapshot tạm, nên người dùng online/offline giữa chừng không làm mất hoặc lặp mục do dịch chuyển vị trí. Gửi lại cùng cursor hợp lệ nhận cùng trang. Cursor thuộc một session, hết hạn sau 30 giây; mỗi session giữ tối đa 4 snapshot gần nhất. Cursor lỗi, hết hạn hoặc thuộc session khác nhận `ERROR 1003 / INVALID_CURSOR`. Client có thể bắt đầu lại bằng `cursor=null`. Để tương thích constructor cũ, server cũng hiểu yêu cầu không có `cursor` là trang đầu.
-
-Client mẫu đợi mỗi phản hồi UDP tối đa 1 giây, thử tối đa 3 lần với cùng số tham chiếu gói. `onlineUsers()` tự lấy đủ các trang. Vì UDP có thể mất gói, presence đóng vai trò thông báo thay đổi; danh sách lấy lại bằng `users` là cách đồng bộ trạng thái hiện tại.
-
-Khi login/logout/timeout/đứt TCP, server gửi một bản `PRESENCE_UPDATE` tới từng endpoint đã đăng ký của các client còn online:
-
-```json
-{"username":"bob","status":"offline"}
-```
-
-Đây là fan-out UDP unicast tới các peer đã biết, không dùng địa chỉ broadcast toàn LAN. Nó giữ đúng nội dung presence và tránh gửi sang các máy ngoài danh sách. Bản tin chỉ có username và status; client cần endpoint/user_id mới thì gọi lại `onlineUsers()`.
-
-## Logout và ràng buộc phiên
-
-Client gửi TCP `LOGOUT_REQUEST` chứa `session_id`; header chứa `sender_id=user_id`. Server yêu cầu token, user và chính kết nối TCP đã login phải khớp. Sau khi hủy phiên, server trả `{"status":"success"}` và phát offline.
-
-Client khác biết `user_id` vẫn không có quyền logout hộ. Cả trường hợp biết token nhưng gửi qua kết nối TCP khác cũng bị từ chối. Token cũ không dùng được sau logout. TCP còn mở sau logout có thể login lại; sau timeout server đã đóng TCP nên cần tạo `AccountClient` mới.
-
-## Giao thức và những điểm đã thống nhất trong mã
-
-Giữ header version 2, 24 byte, big-endian và các mã trong `common.MessageType`. Account/presence dùng `stream_id=0`, `receiver_id=0` khi gửi lên server, flags bằng 0 và `sequence_number` khác 0. Phản hồi dùng cùng sequence của yêu cầu để client ghép đúng phản hồi. Presence có sequence riêng từ server.
-
-| Hoạt động | Mã yêu cầu / phản hồi | Giao thức |
-| --- | --- | --- |
-| Signup | `0x0C` / `0x0D` | TCP |
-| Login | `0x01` / `0x02` | TCP |
-| Logout | `0x14` / `0x15` | TCP |
-| Heartbeat | `0x05` | UDP |
-| Online list | `0x12` / `0x06` | UDP |
-| Presence | `0x13` | UDP từ server |
-| Lỗi | `0x0A` | Cùng giao thức với yêu cầu |
-
-Các trường JSON dùng snake_case. `LOGIN_RESPONSE.status` là chuỗi `success/failed`; `session_id` và `user_id` chỉ xuất hiện khi thành công, `reason` chỉ xuất hiện khi thất bại. Getter `isStatus()` vẫn dùng được trong Java như một giá trị boolean tiện ích.
-
-`ErrorPayload` thêm `related_stream_id` và `related_sequence_number` để chỉ đúng gói lỗi. Giữ mã lỗi số thập phân 1001–1004 trong `common.ErrorCode`: sai thông tin đăng nhập, trùng tên, sai payload và chưa xác thực. Header/gói không thể giải mã bị loại; server không đoán số tham chiếu để phản hồi. TCP bị lỗi framing thì đóng kết nối; JSON sai trong một frame đầy đủ được báo lỗi và có thể gửi yêu cầu tiếp theo.
-
-Các bản tài liệu đầu vào có chỗ khác nhau về transport discovery và mốc timeout. Mã này theo bảng message registry và mục Authentication: signup/login/logout qua TCP; heartbeat/discovery/presence qua UDP; heartbeat 5 giây và hết hạn 15 giây. Không thêm ngưỡng 30 giây từ phần Security vào lifecycle Authentication.
-
-## Cách ghép với phần của thành viên khác
-
-Không sửa mã trong `branch/`. Phần chung ở gốc có thêm các payload signup/presence, endpoint, cursor và sửa các tên trường từng không khớp tài liệu. Khi ghép nhánh, cần dùng cùng phiên bản `common` ở gốc.
-
-Client chính có thể gọi:
-
-```java
-AccountClient account = new AccountClient(serverIp, 5000, 5000,
-        peerListeningSocket.getLocalPort(), fileDatagramSocket.getLocalPort());
-account.onPresence(update -> refreshOnlineUserView());
-account.signup("alice", "password123");
-LoginResponse result = account.login("alice", "password123");
-List<UserInfo> peers = account.onlineUsers();
-account.logout();
-account.close();
-```
-
-Đoạn trên minh họa các điểm gọi; `refreshOnlineUserView()` là hàm của UI. Callback presence chạy trên một luồng riêng, nên có thể gọi `onlineUsers()` trong callback mà không chặn luồng nhận UDP. Khi dùng GUI, vẫn cần chuyển thao tác cập nhật thành phần giao diện về luồng UI.
-
-Client theo dõi kết nối TCP ở nền: khi server đóng kết nối vì timeout hoặc mất kết nối, `isAuthenticated()` và `isConnected()` tự chuyển thành `false`. Logout bình thường chỉ xóa trạng thái đăng nhập và vẫn giữ kết nối để login lại. `peerEndpoint(userID)` tải lại danh sách online rồi trả endpoint TCP/UDP cho module file, hoặc báo `2001: RECIPIENT_OFFLINE` nếu không có người nhận.
-
-Hướng dẫn tích hợp tiếp theo và cách demo các tiêu chí trong ảnh: [INTEGRATION_ACCOUNT_SESSION.md](INTEGRATION_ACCOUNT_SESSION.md).
-
-Ở server, module routing có thể dùng `server.sessions().findOnlineUser(userID)` hoặc `onlinePeers()` để đọc endpoint. Kết quả là bản sao bất biến, không trả token. `SessionRegistry.authenticateUdp(...)` có thể dùng khi payload của module đó mang token và dùng cùng endpoint UDP điều khiển; nếu module chat dùng socket riêng, nhóm cần thống nhất cơ chế gắn socket đó với phiên.
-
-Server nhận tối đa 64 kết nối TCP điều khiển được xử lý đồng thời, mỗi kết nối một worker. Mỗi kết nối chưa login có read timeout 15 giây để dọn client im lặng. Một vòng UDP và một bộ quét phiên hoạt động riêng, nên một client chờ TCP không chặn heartbeat của những client khác.
-
-Hash tài khoản bảo vệ dữ liệu lưu trên đĩa. Lớp mã hóa đường truyền chưa nằm trong module này: gói account và token hiện dùng codec chung chưa mã hóa. Khi ghép module Security, cần bảo vệ TCP đăng nhập và UDP token; ràng buộc token/IP/cổng hiện tại không thay thế xác thực mật mã hoặc TLS.
-
-## Các ca kiểm thử
-
-| Nhóm | Kiểm chứng |
-| --- | --- |
-| Tài khoản | Signup thành công, trùng tên, username/password lỗi, phân biệt hoa thường |
-| Lưu trữ | Không có password gốc trong file, mở lại giữ user_id, ghi lỗi không tạo account trong RAM |
-| Đồng thời | Nhiều signup một tên chỉ một người thắng; hai login một tài khoản chỉ một phiên |
-| Phiên | Token mới sau login lại, token cũ bị từ chối, logout phải đúng kết nối |
-| Heartbeat | Gia hạn hợp lệ, không gia hạn bằng replay/list, sai user/IP/cổng bị từ chối |
-| Timeout | Hết hạn đúng 15 giây bằng đồng hồ giả và qua socket thật với heartbeat 5 giây |
-| Presence | Login → online; logout, timeout, TCP đóng → offline; không phát offline hai lần |
-| Discovery | 20 người không bị thiếu, gói ≤1.100 byte, snapshot ổn định, cursor riêng từng phiên và có hạn |
-| Gói lỗi | JSON thiếu/sai/trùng trường, UDP quá ngắn/quá dài không làm server ngừng hoạt động |
-| Tải đồng thời | 20 client signup/login, mỗi client lấy đủ 20 người online, đóng xong registry trống |
-
-Chạy `mvn test` hoặc lệnh Maven cục bộ trong README để xem kết quả thực tế. Một ca đợi hết hạn 15 giây thật nên toàn bộ bộ kiểm thử cần hơn 15 giây.
+Module hash mật khẩu trên đĩa nhưng chưa mã hóa đường truyền.
+Token/IP/cổng không thay thế TLS hay xác thực mật mã. HTTP UI, NAT traversal,
+chat, reliable file transfer, BBR/CUBIC và mã hóa payload thuộc phần tích hợp khác.

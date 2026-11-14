@@ -7,8 +7,8 @@ class LogoutResponse:
     def __post_init__(self):
         if not isinstance(self.status, str):
             raise TypeError("status must be a string")
-        if not self.status:
-            raise ValueError("status must not be empty")
+        if self.status != "success":
+            raise ValueError("Logout status must be success")
 
     def get_status(self) -> str:
         return self.status

@@ -1,17 +1,12 @@
-"""Python port of AccountClient.java for the MMT protocol.
-
-Place at client/account_client.py.
-Uses ordinary TCP/UDP sockets, PacketIO/UdpPacketIO and the migrated payloads.
-Not a StreapRous raw-socket client: a transport adapter is needed for that.
-"""
+"""Account API using the project's TCP/UDP packet protocol and shared payloads."""
 
 from __future__ import annotations
 
 import socket
 import threading
-from concurrent.futures import Future, InvalidStateError, ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
+from queue import Queue, Empty, Full
 from dataclasses import dataclass
-from enum import Enum
 from typing import Callable
 
 from common.ControlPackets import ControlPackets
@@ -25,6 +20,7 @@ from common.payload.Heartbeat import Heartbeat
 from common.payload.LoginRequest import LoginRequest
 from common.payload.LoginResponse import LoginResponse
 from common.payload.LogoutRequest import LogoutRequest
+from common.payload.LogoutResponse import LogoutResponse
 from common.payload.PresenceUpdate import PresenceUpdate
 from common.payload.SignupRequest import SignupRequest
 from common.payload.SignupResponse import SignupResponse
@@ -41,20 +37,13 @@ class _LoginState:
     heartbeat_sequence: int = 0
 
 
-def _message_type_value(value: int | str | Enum) -> int:
-    """Accept message-type constants as int, IntEnum or decimal/hex string."""
-    if isinstance(value, Enum):
-        value = value.value
-    if isinstance(value, str):
-        return int(value, 0)
-    if type(value) is int:
-        return value
-    raise TypeError(f"Unsupported message type: {value!r}")
+class AccountRequestError(OSError):
+    """A structured tracker rejection, distinct from a transport failure."""
 
-
-def _control_type_string(value: int | str | Enum) -> str:
-    """ControlPackets.create was ported from Java accepting a numeric string."""
-    return f"0x{_message_type_value(value):02X}"
+    def __init__(self, code: int, reason: str):
+        super().__init__(f"{code}: {reason}")
+        self.code = code
+        self.reason = reason
 
 
 class AccountClient:
@@ -92,9 +81,13 @@ class AccountClient:
         self._closed = False
         self._heartbeats_enabled = True
         self._presence_listener: Callable[[PresenceUpdate], None] = lambda _: None
+        self._users_listener = None
+        self._refresh_users = threading.Event()
 
-        self._pending_tcp: dict[int, Future[Packet]] = {}
-        self._pending_udp: dict[int, Future[Packet]] = {}
+        # _request_lock allows one account request at a time. Readers deliver
+        # its reply through a queue; heartbeat/presence do not wait for replies.
+        self._pending = None
+        self._users_thread = None
         self._callbacks = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="account-presence"
         )
@@ -155,6 +148,21 @@ class AccountClient:
         with self._state_lock:
             self._presence_listener = listener
 
+    def on_users(self, listener: Callable[[tuple[UserInfo, ...]], None]) -> None:
+        """Publish complete snapshots on presence and every 5s to repair UDP loss."""
+        if not callable(listener):
+            raise TypeError("User-list listener must be callable")
+        with self._state_lock:
+            if self._closed:
+                raise OSError("Client is closed")
+            self._users_listener = listener
+            if self._users_thread is None:
+                self._users_thread = threading.Thread(
+                    target=self._users_loop, name="account-users", daemon=True
+                )
+                self._users_thread.start()
+        self._refresh_users.set()
+
     def signup(self, username: str, password: str) -> SignupResponse:
         with self._request_lock:
             self._require_logged_out()
@@ -185,25 +193,38 @@ class AccountClient:
                     self._login = _LoginState(response.session_id, response.user_id)
                 # Register the UDP source port immediately, just as the Java client does.
                 self._send_heartbeat()
+                self._refresh_users.set()
             return response
 
     def logout(self) -> None:
         with self._request_lock:
             current = self._require_login()
             try:
-                self._control(
+                response = self._control(
                     MessageType.LOGOUT_REQUEST,
                     MessageType.LOGOUT_RESPONSE,
                     current.user_id,
                     LogoutRequest(current.token),
                 )
+                JsonPayloadCodec.decode(response.payload, LogoutResponse)
             finally:
                 with self._state_lock:
                     if self._login is current:
                         self._login = None
+                self._refresh_users.set()
 
     def online_users(self) -> tuple[UserInfo, ...]:
         """Retrieve all discovery pages, retrying each lost UDP request 3 times."""
+        # An expired/evicted cursor invalidates the entire snapshot. Never append
+        # a new first page to an old partial result; restart once, then surface it.
+        for attempt in range(2):
+            try:
+                return self._online_users_snapshot()
+            except AccountRequestError as exc:
+                if attempt or exc.code != 1003 or exc.reason != "INVALID_CURSOR":
+                    raise
+
+    def _online_users_snapshot(self) -> tuple[UserInfo, ...]:
         with self._request_lock:
             current = self._require_login()
             users: list[UserInfo] = []
@@ -212,16 +233,14 @@ class AccountClient:
 
             while True:
                 request = ControlPackets.create(
-                    _control_type_string(MessageType.USER_LIST_REQUEST),
+                    str(MessageType.USER_LIST_REQUEST),
                     self._next_sequence(),
                     current.user_id,
                     0,
                     UserListRequest(current.token, cursor),
                 )
                 response = self._request_udp(request)
-                if response.header.messageType != _message_type_value(
-                    MessageType.USER_LIST_RESPONSE
-                ):
+                if response.header.messageType != MessageType.USER_LIST_RESPONSE:
                     raise OSError("Unexpected discovery response")
 
                 page = JsonPayloadCodec.decode(response.payload, UserListResponse)
@@ -256,17 +275,50 @@ class AccountClient:
         with self._state_lock:
             self._heartbeats_enabled = enabled
 
+    def _begin_request(self, transport, reference):
+        with self._pending_lock:
+            if self._stopped.is_set():
+                raise OSError("Client is closed")
+            replies = Queue(maxsize=1)
+            self._pending = (transport, reference, replies)
+            return replies
+
+    @staticmethod
+    def _put_reply(replies, value):
+        try:
+            replies.put_nowait(value)
+        except Full:
+            pass  # Ignore duplicate replies or a close after the reply arrived.
+
+    def _deliver_reply(self, transport, packet):
+        with self._pending_lock:
+            if self._pending is None:
+                return False
+            expected_transport, reference, replies = self._pending
+            if transport != expected_transport or packet.header.sequenceNumber != reference:
+                return False
+            self._put_reply(replies, packet)
+            return True
+
+    @staticmethod
+    def _wait_reply(replies, timeout):
+        try:
+            reply = replies.get(timeout=timeout)
+        except Empty:
+            raise TimeoutError("No reply before timeout") from None
+        if isinstance(reply, OSError):
+            raise reply
+        return reply
+
     def _control(
-        self, message_type: int | str | Enum, expected_type: int | str | Enum,
+        self, message_type: int, expected_type: int,
         sender_id: int, body: object,
     ) -> Packet:
         request = ControlPackets.create(
-            _control_type_string(message_type), self._next_sequence(), sender_id, 0, body
+            str(message_type), self._next_sequence(), sender_id, 0, body
         )
         reference = request.header.sequenceNumber
-        future: Future[Packet] = Future()
-        with self._pending_lock:
-            self._pending_tcp[reference] = future
+        replies = self._begin_request("tcp", reference)
 
         try:
             with self._state_lock:
@@ -274,14 +326,14 @@ class AccountClient:
                     raise OSError("Connection is closed; reconnect")
             with self._tcp_send_lock:
                 PacketIO.writePacket(self._tcp, request)
-            response = future.result(timeout=5.0)
+            response = self._wait_reply(replies, 5.0)
         except (OSError, TimeoutError) as exc:
             # A failed/expired TCP control exchange makes this connection unusable.
             self.close()
             raise OSError("Control connection failed; reconnect") from exc
         finally:
             with self._pending_lock:
-                self._pending_tcp.pop(reference, None)
+                self._pending = None
 
         header = response.header
         if (
@@ -290,9 +342,19 @@ class AccountClient:
             or header.sequenceNumber != reference
         ):
             raise OSError("Unmatched control response")
-        self._check_error(response)
-        if header.messageType != _message_type_value(expected_type):
+        if header.messageType == MessageType.ERROR:
+            if header.receiverID != sender_id:
+                raise OSError("Wrong control response recipient")
+            self._check_error(response)
+        if header.messageType != expected_type:
             raise OSError("Unexpected response")
+        if header.messageType == MessageType.LOGIN_RESPONSE:
+            login = JsonPayloadCodec.decode(response.payload, LoginResponse)
+            expected_receiver = login.user_id or 0
+        else:
+            expected_receiver = sender_id
+        if header.receiverID != expected_receiver:
+            raise OSError("Wrong control response recipient")
         return response
 
     def _receive_control_loop(self) -> None:
@@ -302,43 +364,49 @@ class AccountClient:
                 if response is None:
                     return
                 header = response.header
+                if self._handle_application_packet(response):
+                    continue
                 if header.senderID != 0 or header.streamID != 0 or header.flags != 0:
                     raise OSError("Invalid control response header")
-                with self._pending_lock:
-                    future = self._pending_tcp.get(header.sequenceNumber)
-                if future is None:
+                if not self._deliver_reply("tcp", response):
                     raise OSError("Unexpected control response")
-                try:
-                    future.set_result(response)
-                except InvalidStateError:
-                    pass  # close() or another receiver already resolved the future
         except (OSError, EOFError, ValueError, TypeError):
             pass
         finally:
             # Detect server EOF even when the UI is idle.
             self.close()
 
+    def _handle_application_packet(self, packet: Packet) -> bool:
+        """Extension point for the main client; account replies stay correlated here."""
+        return False
+
     def _request_udp(self, request: Packet) -> Packet:
         reference = request.header.sequenceNumber
-        future: Future[Packet] = Future()
-        with self._pending_lock:
-            self._pending_udp[reference] = future
+        replies = self._begin_request("udp", reference)
 
         try:
             if not self.is_connected:
                 raise OSError("Connection is closed; reconnect")
             for _ in range(3):
+                # Re-establish registration if the initial UDP heartbeat was lost.
+                # Discovery itself never refreshes the server's session deadline.
+                self._send_heartbeat()
                 UdpPacketIO.sendPacket(self._udp, self._server_udp, request)
                 try:
-                    response = future.result(timeout=1.0)
+                    response = self._wait_reply(replies, 1.0)
                 except TimeoutError:
                     continue
+                if response.header.messageType == MessageType.ERROR:
+                    error = JsonPayloadCodec.decode(response.payload, ErrorPayload)
+                    if error.error_message == "HEARTBEAT_REQUIRED":
+                        replies = self._begin_request("udp", reference)
+                        continue
                 self._check_error(response)
                 return response
             raise TimeoutError("Discovery timed out after 3 attempts")
         finally:
             with self._pending_lock:
-                self._pending_udp.pop(reference, None)
+                self._pending = None
 
     def _receive_udp_loop(self) -> None:
         while not self._stopped.is_set():
@@ -366,23 +434,18 @@ class AccountClient:
             ):
                 continue
 
-            if header.messageType == _message_type_value(MessageType.PRESENCE_UPDATE):
+            if header.messageType == MessageType.PRESENCE_UPDATE:
                 try:
                     update = JsonPayloadCodec.decode(packet.payload, PresenceUpdate)
-                except (ValueError, TypeError, UnicodeError):
+                except (ValueError, TypeError, UnicodeError, RecursionError):
                     continue
+                self._refresh_users.set()
                 try:
                     self._callbacks.submit(self._notify_presence, current, update)
                 except RuntimeError:  # callback executor has shut down
                     pass
             else:
-                with self._pending_lock:
-                    future = self._pending_udp.get(header.sequenceNumber)
-                if future is not None:
-                    try:
-                        future.set_result(packet)
-                    except InvalidStateError:
-                        pass
+                self._deliver_reply("udp", packet)
 
     def _notify_presence(self, current: _LoginState, update: PresenceUpdate) -> None:
         with self._state_lock:
@@ -398,6 +461,34 @@ class AccountClient:
         while not self._stopped.wait(5.0):
             self._send_heartbeat()
 
+    def _users_loop(self) -> None:
+        while not self._stopped.is_set():
+            self._refresh_users.wait(5.0)
+            self._refresh_users.clear()
+            with self._state_lock:
+                current = self._login
+                listener = self._users_listener
+            if self._stopped.is_set():
+                return
+            if listener is None:
+                continue
+            try:
+                users = self.online_users() if current else ()
+                self._callbacks.submit(self._notify_users, current, users)
+            except (OSError, ValueError, RuntimeError):
+                continue  # Next refresh retries; a transient UDP loss is not logout.
+
+    def _notify_users(self, current, users) -> None:
+        with self._state_lock:
+            if self._closed or self._login is not current:
+                return
+            listener = self._users_listener
+        try:
+            if listener is not None:
+                listener(users)
+        except Exception:
+            pass
+
     def _send_heartbeat(self) -> None:
         with self._state_lock:
             current = self._login
@@ -409,7 +500,7 @@ class AccountClient:
             return  # session renewal required
         try:
             request = ControlPackets.create(
-                _control_type_string(MessageType.HEARTBEAT),
+                str(MessageType.HEARTBEAT),
                 self._next_sequence(),
                 current.user_id,
                 0,
@@ -420,14 +511,14 @@ class AccountClient:
             pass  # server enforces heartbeat deadline
 
     def _check_error(self, packet: Packet) -> None:
-        if packet.header.messageType != _message_type_value(MessageType.ERROR):
+        if packet.header.messageType != MessageType.ERROR:
             return
         error = JsonPayloadCodec.decode(packet.payload, ErrorPayload)
         # 1004 is UNAUTHENTICATED in the team's common/error_code.py registry.
         if error.error_code == 1004:
             with self._state_lock:
                 self._login = None
-        raise OSError(f"{error.error_code}: {error.error_message}")
+        raise AccountRequestError(error.error_code, error.error_message)
 
     def _next_sequence(self) -> int:
         with self._sequence_lock:
@@ -458,6 +549,7 @@ class AccountClient:
             self._closed = True
             self._login = None
             self._stopped.set()
+            self._refresh_users.set()
 
         for sock in (self._tcp, self._udp):
             try:
@@ -471,15 +563,23 @@ class AccountClient:
                 pass
 
         with self._pending_lock:
-            futures = list(self._pending_tcp.values()) + list(self._pending_udp.values())
-            self._pending_tcp.clear()
-            self._pending_udp.clear()
-        for future in futures:
-            try:
-                future.set_exception(OSError("Client is closed"))
-            except InvalidStateError:
-                pass
-        self._callbacks.shutdown(wait=False, cancel_futures=True)
+            if self._pending is not None:
+                self._put_reply(self._pending[2], OSError("Client is closed"))
+        try:
+            self._callbacks.submit(self._notify_closed_users)
+        except RuntimeError:
+            pass
+        self._callbacks.shutdown(wait=False)
+
+    def _notify_closed_users(self):
+        # Older queued snapshots self-discard after close; the final empty list
+        # tells a UI to remove stale online users when the tracker disappears.
+        listener = self._users_listener
+        try:
+            if listener is not None:
+                listener(())
+        except Exception:
+            pass
 
     def __enter__(self) -> AccountClient:
         return self

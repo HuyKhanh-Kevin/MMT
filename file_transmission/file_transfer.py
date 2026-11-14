@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from uuid import uuid4
 
 from common.FileChunkCodec import FileChunkCodec
@@ -12,19 +13,37 @@ from common.payload.FileChunk import FileChunk
 from common.payload.FileDone import FileDone
 from common.payload.FileReject import FileReject
 from common.payload.FileReq import FileReq
+from file_transmission.file_connection import FileConnection
 from file_transmission.file_io import FileIO
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from client.client_account import Client
 
+@dataclass
+class TransferSession:
+    file_id: str
+    peer_id: int
+    peer_udp_address: tuple[str, int]
+    file_io: FileIO
+    file_size: int
+    total_chunk: int
+    checksum: str
+
 class FileTransfer:
     def __init__(self, client: "Client"):
         self.client = client
+        self.connection: FileConnection
 
-        self.active_transfer: dict[str, FileIO] = {}
+        self.active_transfer: dict[str, TransferSession] = {}
 
-    def create_file_request_packet(self, receiver: int, file_path: str) -> tuple[str, Packet]:
+    def set_file_connection(self, connection: FileConnection):
+        self.connection = connection
+
+    def create_file_request_packet(self, receiver: int, file_path: str, peer_ip: str, peer_udp_port: int) -> tuple[str, Packet]:
+        if not self.client.get_authenticated():
+            raise RuntimeError("You must login before sending a file")
+
         file_io = FileIO()
 
         try:
@@ -37,17 +56,18 @@ class FileTransfer:
             file_checksum = file_io.file_checksum
             total_chunk = (file_size + ProtocolConstants.MAX_CHUNK_DATA_SIZE - 1) // ProtocolConstants.MAX_CHUNK_DATA_SIZE
 
-            file_req = FileReq(file_id, file_name, file_size, total_chunk, file_checksum)
+            file_req = FileReq(file_id, file_name, file_size, total_chunk, file_checksum, self.connection.get_file_udp_port())
             payload = JsonPayloadCodec.encode(file_req)
             header = PacketHeader(int(ProtocolConstants.PROTOCOL_VERSION), MessageType.FILE_REQUEST, 0,
                                   self.client.get_outgoing_stream(receiver), self.client.next_tcp_sequence(),
                                   len(payload), self.client.id, receiver)
+            packet = Packet(header, payload)
         except Exception:
             file_io.close_source()
             raise
 
-        self.active_transfer[file_id] = file_io
-        return file_id, Packet(header, payload)
+        self.active_transfer[file_id] = TransferSession(file_id, receiver, (peer_ip, peer_udp_port), file_io, file_size, total_chunk, file_checksum)
+        return file_id, packet
 
     def create_file_accept_packet(self, receiver: int, file_id: str) -> Packet:
         file_acp = FileAccept(file_id)

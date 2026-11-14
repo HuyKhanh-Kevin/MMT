@@ -11,6 +11,7 @@ class FileReq:
     file_size: int
     total_chunks: int
     checksum: str
+    sender_udp_port: int
 
     def __post_init__(self):
         validate_file_id(self.file_id)
@@ -27,6 +28,9 @@ class FileReq:
         if not isinstance(self.checksum, str) or not self.checksum:
             raise ValueError("Checksum must be a non-empty string")
 
+        if type(self.sender_udp_port) is not int or not 1 <= self.sender_udp_port <= 65535:
+            raise ValueError("Sender UDP port must be between 1 and 65535")
+
     def get_file_id(self) -> str:
         return self.file_id
 
@@ -41,3 +45,6 @@ class FileReq:
 
     def get_checksum(self) -> str:
         return self.checksum
+
+    def get_sender_udp_port(self) -> int:
+        return self.sender_udp_port

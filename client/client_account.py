@@ -18,6 +18,7 @@ from common.payload.LogoutResponse import LogoutResponse
 from common.payload.SignupRequest import SignupRequest
 from common.payload.SignupResponse import SignupResponse
 from common.payload.UserListRequest import UserListRequest
+from file_transmission.file_transfer import FileTransfer
 
 
 class Client:
@@ -67,6 +68,8 @@ class Client:
 
         self.stop_event = threading.Event()
         self.heartbeat_thread = None
+
+        self.file_transfer = FileTransfer(self)
 
     def get_authenticated(self) -> bool:
         return self.authenticated

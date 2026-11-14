@@ -19,8 +19,10 @@ Thumbs.db
 /.tools/
 /data/
 /branch/
-/README.md
 *.log
+
+# Personal defense notes (private)
+ORAL_DEFENSE_GUIDE.md
 
 # Python cache files
 __pycache__/

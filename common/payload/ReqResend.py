@@ -1,5 +1,8 @@
 from dataclasses import dataclass
 
+from common.payload.FileID import validate_file_id
+
+
 @dataclass(frozen=True)
 class ReqResend:
     file_id: str
@@ -7,10 +10,7 @@ class ReqResend:
     missing_chunk_orders: list[int]
 
     def __post_init__(self):
-        if not isinstance(self.file_id, str):
-            raise TypeError("file_id must be a string")
-        if not self.file_id:
-            raise ValueError("file_id must not be empty")
+        validate_file_id(self.file_id)
 
         if type(self.resend_all) is not bool:
             raise TypeError("resend_all must be a boolean")

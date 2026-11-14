@@ -34,7 +34,9 @@ class PacketHeader:
         }
 
         for name, (value, bits) in fields.items():
-            if not isinstance(value, int) or not 0 <= value < (1 << bits):
+            # bool is an int subclass in Python, but it is not a valid
+            # protocol field value.
+            if type(value) is not int or not 0 <= value < (1 << bits):
                 raise ValueError(f"Invalid {name}: {value}")
 
     def toBytes(self) -> bytes:

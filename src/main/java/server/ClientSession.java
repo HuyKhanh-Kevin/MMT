@@ -17,7 +17,6 @@ public class ClientSession {
         this.ipAddress = socket.getInetAddress().getHostAddress();
     }
 
-    // ĐỒNG BỘ GHI PACKET: Bọc synchronized để tránh lẫn byte khi nhiều luồng cùng gửi tới client này
     public synchronized void sendPacket(Packet packet) throws IOException {
         if (socket != null && !socket.isClosed()) {
             PacketIO.writePacket(socket.getOutputStream(), packet);

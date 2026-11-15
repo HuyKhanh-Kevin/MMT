@@ -67,7 +67,9 @@ class FileConnection:
         return self.peer_tcp_connections.get(peer_ip, None)
 
     def remove_peer_connection(self, peer_ip: str) -> None:
-        if self.get_peer_tcp_connection(peer_ip) is not None:
+        connection = self.peer_tcp_connections.get(peer_ip)
+        if connection is not None:
+            connection.close()
             self.peer_tcp_connections.pop(peer_ip)
 
     def close_connection(self) -> None:

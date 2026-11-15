@@ -21,19 +21,16 @@ public class ClientHandler implements Runnable {
     public void run() {
         try (InputStream in = session.getSocket().getInputStream()) {
             while (!session.getSocket().isClosed()) {
-                // Đọc packet hoàn chỉnh qua PacketIO của Khánh
                 Packet packet = PacketIO.readPacket(in);
                 if (packet == null) {
-                    break; // Kết nối đã đóng
+                    break;
                 }
 
                 int msgType = packet.getHeader().getMessageType();
 
-                // PHỐI HỢP VỚI CA: Chuyển tiếp tin nhắn Chat (0x03)
                 if (msgType == MessageType.CHAT_MESSAGE || msgType == 0x03) {
                     relayChatMessage(packet);
                 } 
-                // GHẾP HANDLER CỦA ĐÔNG: Các gói tin Login, Logout...
                 else {
                     dispatchToDongHandlers(packet);
                 }
@@ -43,7 +40,6 @@ public class ClientHandler implements Runnable {
         } catch (Exception e) {
             System.err.println("[SERVER] Lỗi xử lý Client: " + e.getMessage());
         } finally {
-            // XỬ LÝ NGẮT KẾT NỐI: Dọn dẹp tài nguyên để không làm Server dừng
             sessionManager.removeSession(session);
             try { session.getSocket().close(); } catch (IOException ignored) {}
         }
@@ -54,14 +50,12 @@ public class ClientHandler implements Runnable {
 
         try {
             if (receiverId == 0) {
-                // Broadcast: Gửi tới tất cả client ngoại trừ người gửi
                 for (ClientSession target : sessionManager.getAllSessions()) {
                     if (target.getUserId() != session.getUserId()) {
                         target.sendPacket(packet);
                     }
                 }
             } else {
-                // Unicast: Gửi trực tiếp tới 1 client
                 ClientSession target = sessionManager.getSession(receiverId);
                 if (target != null) {
                     target.sendPacket(packet);
@@ -75,6 +69,5 @@ public class ClientHandler implements Runnable {
     }
 
     private void dispatchToDongHandlers(Packet packet) {
-        // Nơi gọi các handler nghiệp vụ của Đông khi Đông commit code
     }
 }

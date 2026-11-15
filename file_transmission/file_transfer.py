@@ -1,3 +1,5 @@
+import socket
+import threading
 from dataclasses import dataclass
 from uuid import uuid4
 
@@ -6,7 +8,9 @@ from common.JsonPayloadCodec import JsonPayloadCodec
 from common.MessageType import MessageType
 from common.Packet import Packet
 from common.PacketHeader import PacketHeader
+from common.PacketIO import PacketIO
 from common.ProtocolConstants import ProtocolConstants
+from common.UdpPacketIO import UdpPacketIO
 from common.payload.ErrorFile import ErrorFile
 from common.payload.FileAccept import FileAccept
 from common.payload.FileChunk import FileChunk
@@ -37,8 +41,41 @@ class FileTransfer:
 
         self.active_transfer: dict[str, TransferSession] = {}
 
+        self.lock = threading.Lock()
+
     def set_file_connection(self, connection: FileConnection):
         self.connection = connection
+
+    def peer_tcp_sending(self, peer_ip: str, peer_tcp_port: int, packet: Packet) -> None:
+        with self.lock:
+            self.connection.connect_peer(peer_ip, peer_tcp_port)
+            connection = self.connection.get_peer_tcp_connection(peer_ip)
+            if connection is not None:
+                PacketIO.writePacket(connection, packet)
+
+    def peer_tcp_receiving_loop(self, peer_ip: str):
+        try:
+            while self.client.get_running():
+                pass
+        except (OSError, EOFError) as error:
+            if self.client.get_running():
+                print(f"TCP error: {error}")
+        finally:
+            self.connection.remove_peer_connection(peer_ip)
+
+    def peer_udp_sending(self, peer_ip: str, peer_udp_port: int, packet: Packet) -> None:
+        UdpPacketIO.sendPacket(self.connection.file_udp_socket, (peer_ip, peer_udp_port), packet)
+
+    def peer_udp_receiving_loop(self):
+        while self.client.get_running():
+            try:
+                pass
+            except socket.timeout:
+                continue
+            except OSError as error:
+                if self.client.get_running():
+                    print(f"UDP error: {error}")
+                continue
 
     def create_file_request_packet(self, receiver: int, file_path: str, peer_ip: str, peer_udp_port: int) -> tuple[str, Packet]:
         if not self.client.get_authenticated():

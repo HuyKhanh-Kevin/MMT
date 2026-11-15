@@ -66,6 +66,10 @@ class FileConnection:
     def get_peer_tcp_connection(self, peer_ip: str) -> socket.socket | None:
         return self.peer_tcp_connections.get(peer_ip, None)
 
+    def remove_peer_connection(self, peer_ip: str) -> None:
+        if self.get_peer_tcp_connection(peer_ip) is not None:
+            self.peer_tcp_connections.pop(peer_ip)
+
     def close_connection(self) -> None:
         self.stop_event.set()
         self.file_udp_socket.close()

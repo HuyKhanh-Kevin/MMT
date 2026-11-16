@@ -88,7 +88,7 @@ class Request():
             if path == '/':
                 path = '/index.html'
         except Exception:
-            return None, None
+            return None, None, None
 
         return method, path, version
              
@@ -98,8 +98,8 @@ class Request():
         headers = {}
         for line in lines[1:]:
             if ': ' in line:
-                key, val = line.split(': ', 1)
-                headers[key.lower()] = val
+                key, val = line.split(':', 1)
+                headers[key.strip().lower()] = val.strip()
         return headers
 
     def fetch_headers_body(self, request):
@@ -144,6 +144,7 @@ class Request():
         if not routes == {}:
             self.routes = routes
             print("[Request] Routing METHOD {} path {}".format(self.method, self.path))
+            self.hook = None
             self.hook = routes.get((self.method, self.path))
             print("[Request] Hook has request {}".format(request))
             #
@@ -157,26 +158,20 @@ class Request():
             #        by parsing the header            #
         self.cookies = self.prepare_cookies(cookies)
 
-        auth = self.headers.get('Authorizaion')
+        auth = self.headers.get('authorizaion','')
         if not auth == None:
             self.auth = self.prepare_auth(auth)
         return
 
     def prepare_body(self, raw_body):
-        self.prepare_content_length(raw_body)
-        if int(self.headers['content-length']) > self.MAX_BODY_SIZE: return
-        
         contentType = self.headers.get('content-type', '').split(';')[0].strip()
-        match(contentType):
-            case 'application/json':
-                body = json.loads(raw_body)
-            case _:
-                body = raw_body
-        return body
+        if contentType == 'application/json':
+            return json.loads(raw_body)
+        return raw_body
 
 
     def prepare_content_length(self, body):
-        self.headers["Content-Length"] = str(len(body))
+        self.headers['content-length'] = str(len(body))
 
 
 
@@ -188,7 +183,11 @@ class Request():
         return tuple(auth.split())
 
     def prepare_cookies(self, cookies):
-        cookieArray = cookies.split('; ')
-        if len(cookieArray) < 1: return {}
-        return {}
-        # return {c.split('=')[0] : c.split('=')[1] for c in cookieArray} 
+        result = {}
+
+        for item in cookies.split(';'):
+            if '=' in item:
+                key, value = item.strip().split('=', 1)
+                result[key] = value
+
+        return result

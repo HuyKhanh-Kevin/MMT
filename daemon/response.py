@@ -172,7 +172,7 @@ class Response():
             base_dir = BASE_DIR+"apps/"
             self.headers['Content-Type']='application/{}'.format(sub_type)       
         elif main_type == 'multipart':
-            base_dir = BASE_DIR + "static"
+            base_dir = BASE_DIR + "static/"
             self.headers['Content-Type']='multipart/{}'.format(sub_type)
         #
         #  TODO: process other mime_type

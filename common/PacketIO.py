@@ -3,8 +3,8 @@ import socket
 import struct
 
 from common.Packet import Packet
-from common.PacketCodec import PacketCodec
-from common.ProtocolConstants import ProtocolConstants
+from common import PacketCodec
+from common import ProtocolConstants
 
 
 class PacketIO:

@@ -1,5 +1,7 @@
+from common.PacketHeader import PacketHeader
+
 class Packet:
-    def __init__(self, header, payload: bytes):
+    def __init__(self, header: PacketHeader, payload: bytes):
         if header is None:
             raise ValueError("Header cannot be None")
 

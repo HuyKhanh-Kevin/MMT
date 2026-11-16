@@ -11,12 +11,14 @@ from common.PacketHeader import PacketHeader
 from common.PacketIO import PacketIO
 from common.ProtocolConstants import ProtocolConstants
 from common.UdpPacketIO import UdpPacketIO
+from common.payload import FileID
 from common.payload.ErrorFile import ErrorFile
 from common.payload.FileAccept import FileAccept
 from common.payload.FileChunk import FileChunk
 from common.payload.FileDone import FileDone
 from common.payload.FileReject import FileReject
 from common.payload.FileReq import FileReq
+from common.payload.ACK import ACK
 from file_transmission.file_connection import FileConnection
 from file_transmission.file_io import FileIO
 from typing import TYPE_CHECKING
@@ -54,14 +56,26 @@ class FileTransfer:
                 PacketIO.writePacket(connection, packet)
 
     def peer_tcp_receiving_loop(self, peer_ip: str):
-        try:
-            while self.client.get_running():
-                pass
-        except (OSError, EOFError) as error:
-            if self.client.get_running():
-                print(f"TCP error: {error}")
-        finally:
-            self.connection.remove_peer_connection(peer_ip)
+        connection = self.connection.get_peer_tcp_connection(peer_ip)
+        if connection is not None:
+            try:
+                while self.client.get_running():
+                    packet = PacketIO.readPacket(connection)
+
+                    if packet is None: continue
+
+                    header = packet.getHeader()
+                    if header.message_type == MessageType.FILE_REQUEST: pass
+                    elif header.message_type == MessageType.FILE_ACCEPTED: pass
+                    elif header.message_type == MessageType.FILE_REJECTED: pass
+                    elif header.message_type == MessageType.FILE_DONE: pass
+                    elif header.message_type == MessageType.ERROR_FILE: pass
+
+            except (OSError, EOFError) as error:
+                if self.client.get_running():
+                    print(f"TCP error: {error}")
+            finally:
+                self.connection.remove_peer_connection(peer_ip)
 
     def peer_udp_sending(self, peer_ip: str, peer_udp_port: int, packet: Packet) -> None:
         UdpPacketIO.sendPacket(self.connection.file_udp_socket, (peer_ip, peer_udp_port), packet)
@@ -69,7 +83,19 @@ class FileTransfer:
     def peer_udp_receiving_loop(self):
         while self.client.get_running():
             try:
-                pass
+                received_packet = UdpPacketIO.receivePacket(self.connection.file_udp_socket)
+                packet = received_packet.packet
+                source = received_packet.source
+
+                if received_packet is None: continue
+
+                header = packet.getHeader()
+                if header.message_type == MessageType.FILE_CHUNK:
+                    response: FileChunk = FileChunkCodec.decode(packet.getPayload())
+                    if self.active_transfer[response.file_id] != source: continue
+                elif header.message_type == MessageType.ACK:
+                    response: ACK = JsonPayloadCodec.decode(packet.getPayload(), ACK)
+
             except socket.timeout:
                 continue
             except OSError as error:
@@ -87,7 +113,7 @@ class FileTransfer:
             file_io.open_source(file_path)
             file_io.calculate_hash()
 
-            file_id = str(uuid4())
+            file_id = FileID.new_file_id()
             file_name = file_io.file_name
             file_size = file_io.file_size
             file_checksum = file_io.file_checksum
@@ -142,6 +168,14 @@ class FileTransfer:
         file_chunk = FileChunk(file_id, chunk_index, chunk_data)
         payload = FileChunkCodec.encode(file_chunk)
         header = PacketHeader(int(ProtocolConstants.PROTOCOL_VERSION), MessageType.FILE_CHUNK, 1,
+                              self.client.get_outgoing_stream(receiver), self.client.next_udp_sequence(), len(payload),
+                              self.client.id, receiver)
+        return Packet(header, payload)
+
+    def create_ack_packet(self, receiver: int, stream_id: int, seq_num: int) -> Packet:
+        ack = ACK(stream_id, seq_num)
+        payload = JsonPayloadCodec.encode(ack)
+        header = PacketHeader(int(ProtocolConstants.PROTOCOL_VERSION), MessageType.ACK, 0,
                               self.client.get_outgoing_stream(receiver), self.client.next_udp_sequence(), len(payload),
                               self.client.id, receiver)
         return Packet(header, payload)

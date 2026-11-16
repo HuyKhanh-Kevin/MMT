@@ -1,4 +1,4 @@
-package server;
+package test.java.server;
 
 import common.ErrorCode;
 import org.junit.jupiter.api.Test;

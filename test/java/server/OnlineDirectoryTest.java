@@ -1,4 +1,4 @@
-package server;
+package test.java.server;
 
 import common.JsonPayloadCodec;
 import common.ProtocolConstants;

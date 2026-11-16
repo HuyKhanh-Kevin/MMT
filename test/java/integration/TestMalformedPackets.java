@@ -1,4 +1,4 @@
-package integration;
+package test.java.integration;
 
 import common.*;
 import org.junit.jupiter.api.DisplayName;

@@ -1,11 +1,8 @@
-"""Account TCP control and UDP discovery server using only Python's stdlib."""
-
 import argparse
 import logging
 from pathlib import Path
 import socket
 import threading
-import uuid
 
 from common.ControlPackets import ControlPackets
 from common.MessageType import MessageType
@@ -32,7 +29,8 @@ class TrackerServer:
         self._stop = threading.Event()
         self._lock = threading.RLock()
         self._publish_lock = threading.Lock()
-        self._slots = threading.BoundedSemaphore(max_connections)
+        self._max_connections = max_connections
+        self._next_connection = 0
         self._connections = {}
         self._workers = set()
         self._loops = []
@@ -83,10 +81,12 @@ class TrackerServer:
                 continue
             except OSError:
                 return
-            if not self._slots.acquire(blocking=False):
-                peer.close()
-                continue
-            connection = uuid.uuid4()
+            with self._lock:
+                if self._closed or len(self._connections) >= self._max_connections:
+                    peer.close()
+                    continue
+                self._next_connection += 1
+                connection = self._next_connection
             thread = None
             try:
                 peer.settimeout(self._idle_timeout)
@@ -94,7 +94,6 @@ class TrackerServer:
                 with self._lock:
                     if self._closed:
                         peer.close()
-                        self._slots.release()
                         return
                     self._connections[connection] = peer
                     thread = threading.Thread(target=self._control_loop,
@@ -107,7 +106,6 @@ class TrackerServer:
                     self._connections.pop(connection, None)
                     self._workers.discard(thread)
                 peer.close()
-                self._slots.release()
 
     def _control_loop(self, connection, peer, source_ip):
         try:
@@ -117,16 +115,18 @@ class TrackerServer:
                     if request is None:
                         break
                     response = self.handler.handle_tcp(connection, source_ip, request)
-                    peer.settimeout(None if self.sessions.has_session(connection) else self._idle_timeout)
+                    if self.sessions.has_session(connection):
+                        peer.settimeout(None)
+                    else:
+                        peer.settimeout(self._idle_timeout)
                     PacketIO.writePacket(peer, response)
                     self._publish_changes()
         except (OSError, EOFError):
-            pass  # A broken/partial TCP frame ends only this client's connection.
+            pass
         except Exception:
             LOG.exception("Account connection failed")
         finally:
             self.sessions.disconnect(connection)
-            self._slots.release()
             self._publish_changes()
             with self._lock:
                 self._connections.pop(connection, None)
@@ -141,7 +141,7 @@ class TrackerServer:
                     UdpPacketIO.sendPacket(self._udp, received.source, response)
                 self._publish_changes()
             except (OSError, ValueError, TypeError):
-                continue  # Drop unframed datagrams; no trustworthy request reference.
+                continue
             except Exception:
                 LOG.exception("UDP request failed")
 
@@ -159,7 +159,10 @@ class TrackerServer:
     def _publish_changes(self):
         with self._publish_lock:
             for update in self.sessions.drain_changes():
-                self._presence_sequence = self._presence_sequence % 0xFFFFFFFF + 1
+                if self._presence_sequence == 0xFFFFFFFF:
+                    self._presence_sequence = 1
+                else:
+                    self._presence_sequence += 1
                 for peer in self.sessions.online_peers():
                     if peer.presence_endpoint is None or peer.username == update.username:
                         continue
@@ -168,7 +171,7 @@ class TrackerServer:
                     try:
                         UdpPacketIO.sendPacket(self._udp, peer.presence_endpoint, packet)
                     except OSError:
-                        pass  # Discovery repairs missed presence notifications.
+                        pass
 
     @staticmethod
     def _close_socket(peer):
@@ -187,7 +190,8 @@ class TrackerServer:
             self._tcp.close()
             self._udp.close()
             connections = tuple(self._connections.values())
-            threads = (*self._loops, *self._workers)
+            threads = list(self._loops)
+            threads.extend(self._workers)
         for peer in connections:
             self._close_socket(peer)
         for thread in threads:

@@ -1,10 +1,7 @@
-"""Account API using the project's TCP/UDP packet protocol and shared payloads."""
-
 from __future__ import annotations
 
 import socket
 import threading
-from concurrent.futures import ThreadPoolExecutor
 from queue import Queue, Empty, Full
 from dataclasses import dataclass
 from typing import Callable
@@ -38,7 +35,7 @@ class _LoginState:
 
 
 class AccountRequestError(OSError):
-    """A structured tracker rejection, distinct from a transport failure."""
+
 
     def __init__(self, code: int, reason: str):
         super().__init__(f"{code}: {reason}")
@@ -47,7 +44,7 @@ class AccountRequestError(OSError):
 
 
 class AccountClient:
-    """Account/session/discovery client with concurrent TCP/UDP readers."""
+
 
     def __init__(
         self,
@@ -80,35 +77,37 @@ class AccountClient:
         self._login: _LoginState | None = None
         self._closed = False
         self._heartbeats_enabled = True
-        self._presence_listener: Callable[[PresenceUpdate], None] = lambda _: None
+        self._presence_listener = None
         self._users_listener = None
         self._refresh_users = threading.Event()
 
-        # _request_lock allows one account request at a time. Readers deliver
-        # its reply through a queue; heartbeat/presence do not wait for replies.
+
         self._pending = None
         self._users_thread = None
-        self._callbacks = ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix="account-presence"
-        )
+        self._callback_queue = Queue()
 
-        # TCP is connection-oriented and blocking; only the background reader calls recv().
+
+        self._tcp = None
+        self._udp = None
         try:
             self._tcp = socket.create_connection((host, server_tcp_port), timeout=3.0)
             self._tcp.settimeout(None)
             self._udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self._udp.bind(("0.0.0.0", 0))
-            self._udp.settimeout(0.5)  # allows receiver to observe close()
-            # Use the TCP peer address, so hostname resolution remains consistent.
+            self._udp.settimeout(0.5)
+
             self._server_udp = (self._tcp.getpeername()[0], server_udp_port)
         except Exception:
-            if hasattr(self, "_tcp"):
+            if self._tcp is not None:
                 self._tcp.close()
-            if hasattr(self, "_udp"):
+            if self._udp is not None:
                 self._udp.close()
-            self._callbacks.shutdown(wait=False, cancel_futures=True)
             raise
 
+        self._callback_thread = threading.Thread(
+            target=self._callback_loop, name="account-callbacks", daemon=True
+        )
+        self._callback_thread.start()
         self._tcp_reader = threading.Thread(
             target=self._receive_control_loop, name="account-tcp-reader", daemon=True
         )
@@ -135,12 +134,16 @@ class AccountClient:
     @property
     def user_id(self) -> int:
         with self._state_lock:
-            return self._login.user_id if self._login is not None else 0
+            if self._login is None:
+                return 0
+            return self._login.user_id
 
     @property
     def session_id(self) -> str | None:
         with self._state_lock:
-            return self._login.token if self._login is not None else None
+            if self._login is None:
+                return None
+            return self._login.token
 
     def on_presence(self, listener: Callable[[PresenceUpdate], None]) -> None:
         if not callable(listener):
@@ -149,7 +152,7 @@ class AccountClient:
             self._presence_listener = listener
 
     def on_users(self, listener: Callable[[tuple[UserInfo, ...]], None]) -> None:
-        """Publish complete snapshots on presence and every 5s to repair UDP loss."""
+
         if not callable(listener):
             raise TypeError("User-list listener must be callable")
         with self._state_lock:
@@ -191,7 +194,7 @@ class AccountClient:
                     if self._closed:
                         raise OSError("Server closed the connection; reconnect")
                     self._login = _LoginState(response.session_id, response.user_id)
-                # Register the UDP source port immediately, just as the Java client does.
+
                 self._send_heartbeat()
                 self._refresh_users.set()
             return response
@@ -214,9 +217,8 @@ class AccountClient:
                 self._refresh_users.set()
 
     def online_users(self) -> tuple[UserInfo, ...]:
-        """Retrieve all discovery pages, retrying each lost UDP request 3 times."""
-        # An expired/evicted cursor invalidates the entire snapshot. Never append
-        # a new first page to an old partial result; restart once, then surface it.
+
+
         for attempt in range(2):
             try:
                 return self._online_users_snapshot()
@@ -255,10 +257,14 @@ class AccountClient:
             return tuple(users)
 
     def peer_endpoint(self, user_id: int) -> PeerEndpoint:
-        """Resolve a peer's addresses from a freshly fetched user list."""
+
         if type(user_id) is not int or not 1 <= user_id <= 0xFFFFFFFF:
             raise ValueError("Invalid user ID")
-        user = next((u for u in self.online_users() if u.user_id == user_id), None)
+        user = None
+        for online_user in self.online_users():
+            if online_user.user_id == user_id:
+                user = online_user
+                break
         if user is None:
             raise OSError("2001: RECIPIENT_OFFLINE")
         address = socket.gethostbyname(user.ip)
@@ -288,7 +294,7 @@ class AccountClient:
         try:
             replies.put_nowait(value)
         except Full:
-            pass  # Ignore duplicate replies or a close after the reply arrived.
+            pass
 
     def _deliver_reply(self, transport, packet):
         with self._pending_lock:
@@ -328,7 +334,7 @@ class AccountClient:
                 PacketIO.writePacket(self._tcp, request)
             response = self._wait_reply(replies, 5.0)
         except (OSError, TimeoutError) as exc:
-            # A failed/expired TCP control exchange makes this connection unusable.
+
             self.close()
             raise OSError("Control connection failed; reconnect") from exc
         finally:
@@ -350,7 +356,10 @@ class AccountClient:
             raise OSError("Unexpected response")
         if header.messageType == MessageType.LOGIN_RESPONSE:
             login = JsonPayloadCodec.decode(response.payload, LoginResponse)
-            expected_receiver = login.user_id or 0
+            if login.user_id is None:
+                expected_receiver = 0
+            else:
+                expected_receiver = login.user_id
         else:
             expected_receiver = sender_id
         if header.receiverID != expected_receiver:
@@ -373,11 +382,11 @@ class AccountClient:
         except (OSError, EOFError, ValueError, TypeError):
             pass
         finally:
-            # Detect server EOF even when the UI is idle.
+
             self.close()
 
     def _handle_application_packet(self, packet: Packet) -> bool:
-        """Extension point for the main client; account replies stay correlated here."""
+
         return False
 
     def _request_udp(self, request: Packet) -> Packet:
@@ -388,8 +397,8 @@ class AccountClient:
             if not self.is_connected:
                 raise OSError("Connection is closed; reconnect")
             for _ in range(3):
-                # Re-establish registration if the initial UDP heartbeat was lost.
-                # Discovery itself never refreshes the server's session deadline.
+
+
                 self._send_heartbeat()
                 UdpPacketIO.sendPacket(self._udp, self._server_udp, request)
                 try:
@@ -417,7 +426,7 @@ class AccountClient:
             except (OSError, ValueError, TypeError):
                 if self._stopped.is_set():
                     return
-                continue  # ignore an invalid datagram; TCP remains alive
+                continue
 
             if received.source != self._server_udp:
                 continue
@@ -440,22 +449,34 @@ class AccountClient:
                 except (ValueError, TypeError, UnicodeError, RecursionError):
                     continue
                 self._refresh_users.set()
-                try:
-                    self._callbacks.submit(self._notify_presence, current, update)
-                except RuntimeError:  # callback executor has shut down
-                    pass
+                self._queue_callback(self._notify_presence, current, update)
             else:
                 self._deliver_reply("udp", packet)
+
+    def _queue_callback(self, callback, *args):
+        with self._state_lock:
+            if not self._closed:
+                self._callback_queue.put((callback, args))
+
+    def _callback_loop(self):
+
+        while True:
+            task = self._callback_queue.get()
+            if task is None:
+                return
+            callback, args = task
+            try:
+                callback(*args)
+            except Exception:
+                pass
 
     def _notify_presence(self, current: _LoginState, update: PresenceUpdate) -> None:
         with self._state_lock:
             if self._closed or self._login is not current:
                 return
             listener = self._presence_listener
-        try:
+        if listener is not None:
             listener(update)
-        except Exception:
-            pass  # a UI callback exception must not stop receiving packets
 
     def _heartbeat_loop(self) -> None:
         while not self._stopped.wait(5.0):
@@ -473,21 +494,21 @@ class AccountClient:
             if listener is None:
                 continue
             try:
-                users = self.online_users() if current else ()
-                self._callbacks.submit(self._notify_users, current, users)
+                if current is None:
+                    users = ()
+                else:
+                    users = self.online_users()
+                self._queue_callback(self._notify_users, current, users)
             except (OSError, ValueError, RuntimeError):
-                continue  # Next refresh retries; a transient UDP loss is not logout.
+                continue
 
     def _notify_users(self, current, users) -> None:
         with self._state_lock:
             if self._closed or self._login is not current:
                 return
             listener = self._users_listener
-        try:
-            if listener is not None:
-                listener(users)
-        except Exception:
-            pass
+        if listener is not None:
+            listener(users)
 
     def _send_heartbeat(self) -> None:
         with self._state_lock:
@@ -497,7 +518,7 @@ class AccountClient:
             current.heartbeat_sequence += 1
             count = current.heartbeat_sequence
         if count > 0xFFFFFFFF:
-            return  # session renewal required
+            return
         try:
             request = ControlPackets.create(
                 str(MessageType.HEARTBEAT),
@@ -508,13 +529,13 @@ class AccountClient:
             )
             UdpPacketIO.sendPacket(self._udp, self._server_udp, request)
         except (OSError, ValueError):
-            pass  # server enforces heartbeat deadline
+            pass
 
     def _check_error(self, packet: Packet) -> None:
         if packet.header.messageType != MessageType.ERROR:
             return
         error = JsonPayloadCodec.decode(packet.payload, ErrorPayload)
-        # 1004 is UNAUTHENTICATED in the team's common/error_code.py registry.
+
         if error.error_code == 1004:
             with self._state_lock:
                 self._login = None
@@ -565,21 +586,15 @@ class AccountClient:
         with self._pending_lock:
             if self._pending is not None:
                 self._put_reply(self._pending[2], OSError("Client is closed"))
-        try:
-            self._callbacks.submit(self._notify_closed_users)
-        except RuntimeError:
-            pass
-        self._callbacks.shutdown(wait=False)
+        self._callback_queue.put((self._notify_closed_users, ()))
+        self._callback_queue.put(None)
 
     def _notify_closed_users(self):
-        # Older queued snapshots self-discard after close; the final empty list
-        # tells a UI to remove stale online users when the tracker disappears.
+
+
         listener = self._users_listener
-        try:
-            if listener is not None:
-                listener(())
-        except Exception:
-            pass
+        if listener is not None:
+            listener(())
 
     def __enter__(self) -> AccountClient:
         return self

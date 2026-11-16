@@ -13,7 +13,7 @@ class Heartbeat:
 
     @property
     def heartbeat_seq_num(self) -> int:
-        """Compatibility getter; the wire field is heartbeat_seq."""
+
         return self.heartbeat_seq
 
 

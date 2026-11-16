@@ -1,10 +1,12 @@
-"""Interactive account demo: python -m client.account_demo [--host LAN_IP]."""
-
 import argparse
 import getpass
 import socket
 
 from client.AccountClient import AccountClient
+
+
+def display_presence(event):
+    print(f"\n[presence] {event.username}: {event.status}")
 
 
 def main():
@@ -13,15 +15,15 @@ def main():
     parser.add_argument("--tcp-port", type=int, default=5000)
     parser.add_argument("--udp-port", type=int, default=5000)
     args = parser.parse_args()
-    # Real bound sockets reserve the advertised ports. File/chat handlers can use
-    # these same sockets when the corresponding modules are integrated.
+
+
     with socket.socket() as peer, socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as file:
         peer.bind(("0.0.0.0", 0))
         peer.listen(1)
         file.bind(("0.0.0.0", 0))
         with AccountClient(args.host, args.tcp_port, args.udp_port,
                            peer.getsockname()[1], file.getsockname()[1]) as account:
-            account.on_presence(lambda event: print(f"\n[presence] {event.username}: {event.status}"))
+            account.on_presence(display_presence)
             print("Commands: signup, login, users, endpoint, status, logout, pause, resume, quit")
             try:
                 while True:
@@ -30,7 +32,10 @@ def main():
                         if command in ("signup", "login"):
                             username = input("Username: ").strip()
                             password = getpass.getpass("Password: ")
-                            response = getattr(account, command)(username, password)
+                            if command == "signup":
+                                response = account.signup(username, password)
+                            else:
+                                response = account.login(username, password)
                             print(response.status, response.reason or "")
                         elif command == "users":
                             for user in account.online_users():

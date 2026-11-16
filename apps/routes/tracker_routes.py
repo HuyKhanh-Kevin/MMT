@@ -1,5 +1,3 @@
-"""UDP heartbeat/discovery routes. Presence is emitted by the transport host."""
-
 from common.JsonPayloadCodec import JsonPayloadCodec
 from common.MessageType import MessageType
 from common.payload.heartbeat import Heartbeat
@@ -10,10 +8,6 @@ class TrackerRoutes:
     def __init__(self, sessions, directory):
         self.sessions = sessions
         self.directory = directory
-        self.routes = {
-            MessageType.HEARTBEAT: self.heartbeat,
-            MessageType.USER_LIST_REQUEST: self.users,
-        }
 
     def heartbeat(self, request, source):
         payload = JsonPayloadCodec.decode(request.payload, Heartbeat)

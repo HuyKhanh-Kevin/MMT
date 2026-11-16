@@ -1,5 +1,3 @@
-"""TCP account routes, reusable by the tracker or a transport adapter."""
-
 from common.JsonPayloadCodec import JsonPayloadCodec
 from common.MessageType import MessageType
 from common.payload.login_request import LoginRequest
@@ -15,11 +13,6 @@ class AuthRoutes:
     def __init__(self, accounts, sessions):
         self.accounts = accounts
         self.sessions = sessions
-        self.routes = {
-            MessageType.SIGNUP_REQUEST: self.signup,
-            MessageType.LOGIN_REQUEST: self.login,
-            MessageType.LOGOUT_REQUEST: self.logout,
-        }
 
     def _logged_out(self, request, connection):
         if request.header.senderID != 0 or self.sessions.has_session(connection):
@@ -47,7 +40,11 @@ class AuthRoutes:
             result = LoginResponse("success", created.session_id, account.user_id, None)
         except AccountException as exc:
             result = LoginResponse("failed", None, None, exc.reason)
-        return MessageType.LOGIN_RESPONSE, result.user_id or 0, result
+        if result.user_id is None:
+            receiver = 0
+        else:
+            receiver = result.user_id
+        return MessageType.LOGIN_RESPONSE, receiver, result
 
     def logout(self, request, connection, source_ip):
         payload = JsonPayloadCodec.decode(request.payload, LogoutRequest)

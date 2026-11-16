@@ -1,10 +1,3 @@
-"""Persistent native account connections behind a local browser's HTTP requests.
-
-Run this bridge on the peer's machine: advertised ports belong to native peer
-modules on that machine, never to a remote browser. Browser leases are separate
-from tracker tokens and expire when the browser stops polling/heartbeating.
-"""
-
 from dataclasses import dataclass
 import secrets
 import threading
@@ -32,7 +25,11 @@ class AccountSessions:
                  *, browser_timeout=15.0, max_sessions=64, clock=time.monotonic):
         if browser_timeout <= 0 or max_sessions < 1:
             raise ValueError("Invalid browser session limits")
-        self._address = (host, tcp_port, udp_port, peer_tcp_port, file_udp_port)
+        self.host = host
+        self.tcp_port = tcp_port
+        self.udp_port = udp_port
+        self.peer_tcp_port = peer_tcp_port
+        self.file_udp_port = file_udp_port
         self._timeout = browser_timeout
         self._limit = max_sessions
         self._clock = clock
@@ -52,7 +49,8 @@ class AccountSessions:
                 raise WebAccountError(503, "ACCOUNT_SERVICE_BUSY")
             self._creating += 1
         try:
-            return AccountClient(*self._address)
+            return AccountClient(self.host, self.tcp_port, self.udp_port,
+                                 self.peer_tcp_port, self.file_udp_port)
         except BaseException:
             with self._lock:
                 self._creating -= 1
@@ -75,7 +73,7 @@ class AccountSessions:
             response = client.login(username, password)
             if response.status != "success":
                 return {"status": "failed", "reason": response.reason}
-            # Ensure UDP registration works before publishing a browser session.
+
             client.online_users()
             with self._lock:
                 if self._closed:
@@ -113,9 +111,18 @@ class AccountSessions:
                 "user_id": session.client.user_id, "username": session.username}
 
     def users(self, token):
-        from dataclasses import asdict
         session = self._get(token)
-        return {"users": [asdict(user) for user in session.client.online_users()]}
+        users = []
+        for user in session.client.online_users():
+            users.append({
+                "username": user.username,
+                "status": user.status,
+                "user_id": user.user_id,
+                "ip": user.ip,
+                "tcp_port": user.tcp_port,
+                "file_udp_port": user.file_udp_port,
+            })
+        return {"users": users}
 
     def logout(self, token):
         session = self._get(token)
@@ -129,10 +136,14 @@ class AccountSessions:
 
     def expire(self):
         with self._lock:
-            expired = [token for token, session in self._sessions.items()
-                       if self._clock() - session.last_activity >= self._timeout
-                       or not session.client.is_connected or not session.client.is_authenticated]
-            clients = [self._sessions.pop(token).client for token in expired]
+            clients = []
+            for token, session in list(self._sessions.items()):
+                timed_out = self._clock() - session.last_activity >= self._timeout
+                disconnected = not session.client.is_connected
+                logged_out = not session.client.is_authenticated
+                if timed_out or disconnected or logged_out:
+                    clients.append(session.client)
+                    del self._sessions[token]
         for client in clients:
             client.close()
 
@@ -144,7 +155,9 @@ class AccountSessions:
         with self._lock:
             self._closed = True
             self._stop.set()
-            clients = [session.client for session in self._sessions.values()]
+            clients = []
+            for session in self._sessions.values():
+                clients.append(session.client)
             self._sessions.clear()
         for client in clients:
             client.close()

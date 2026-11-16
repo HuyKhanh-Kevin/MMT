@@ -1,10 +1,3 @@
-"""Main-client compatibility API backed by one Python AccountClient session.
-
-Account operations may be called directly or through the existing create/send
-methods. Account sends now wait for their correlated reply. Chat packet builders
-remain available; the application's chat router is a separate module.
-"""
-
 import itertools
 import threading
 
@@ -32,7 +25,7 @@ class Client(AccountClient):
         self._outgoing_streams = {}
         self._stream_ids = itertools.count(1)
         super().__init__(server_ip, server_port, udp_port, peer_tcp_port, file_udp_port)
-        self.on_presence(lambda update: self._notify("display_presence", update))
+        self.on_presence(self._display_presence)
 
     @property
     def id(self):
@@ -48,18 +41,37 @@ class Client(AccountClient):
 
     def set_listener(self, listener):
         self.listener = listener
-        self.on_users(lambda users: self._notify("display_user_list", list(users)))
+        self.on_users(self._display_users)
+
+    def _display_presence(self, update):
+        self._notify("display_presence", update)
+
+    def _display_users(self, users):
+        self._notify("display_user_list", list(users))
 
     def _notify(self, method, *args):
-        callback = getattr(self.listener, method, None)
-        if callable(callback):
-            try:
-                callback(*args)
-            except Exception:
-                pass  # A UI exception must not tear down the account connection.
+        if self.listener is None:
+            return
+        try:
+            if method == "display_signup_response":
+                self.listener.display_signup_response(args[0], args[1])
+            elif method == "display_login_response":
+                self.listener.display_login_response(args[0], args[1])
+            elif method == "display_logout_response":
+                self.listener.display_logout_response()
+            elif method == "display_user_list":
+                self.listener.display_user_list(args[0])
+            elif method == "display_presence":
+                self.listener.display_presence(args[0])
+            elif method == "display_message":
+                self.listener.display_message(args[0], args[1])
+            elif method == "display_error":
+                self.listener.display_error(args[0], args[1])
+        except Exception:
+            pass
 
     def start_receiving(self):
-        """Readers already start in AccountClient; never create a second reader."""
+        pass
 
     def close_connection(self):
         self.close()
@@ -142,7 +154,7 @@ class Client(AccountClient):
             if kind == MessageType.LOGOUT_REQUEST:
                 self._validate_session_body(packet, LogoutRequest)
                 return self.logout()
-            # Preserve the existing chat send API on the same authenticated TCP.
+
             current = self._require_login()
             if kind != MessageType.CHAT_MESSAGE or packet.header.senderID != current.user_id:
                 raise ValueError("Unsupported TCP request")
@@ -158,7 +170,7 @@ class Client(AccountClient):
                 return users
             if packet.header.messageType == MessageType.HEARTBEAT:
                 self._validate_session_body(packet, Heartbeat)
-                # Use the single heartbeat scheduler/counter, including pause().
+
                 self._send_heartbeat()
                 return None
             raise ValueError("Unsupported account UDP request")
@@ -183,19 +195,19 @@ class Client(AccountClient):
         return self.create_private_chat_packet(0, text)
 
     def _handle_application_packet(self, packet):
-        # Demultiplex existing chat callbacks without opening another account
-        # session or letting unsolicited messages consume pending auth replies.
+
+
         h = packet.header
         if h.messageType == MessageType.CHAT_MESSAGE:
             if not self.is_authenticated or h.receiverID not in (0, self.user_id):
                 raise ValueError("Wrong application packet recipient")
             body = JsonPayloadCodec.decode(packet.payload, ChatMessage)
-            self._callbacks.submit(self._notify, "display_message", h.senderID, body.text)
+            self._queue_callback(self._notify, "display_message", h.senderID, body.text)
             return True
         if h.messageType == MessageType.ERROR and h.streamID != 0:
             if h.senderID != 0 or h.receiverID != self.user_id:
                 raise ValueError("Wrong application error recipient")
             body = JsonPayloadCodec.decode(packet.payload, ErrorPayload)
-            self._callbacks.submit(self._notify, "display_error", body.error_code, body.error_message)
+            self._queue_callback(self._notify, "display_error", body.error_code, body.error_message)
             return True
         return False

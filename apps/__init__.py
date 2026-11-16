@@ -11,6 +11,6 @@
 #
 
 def create_sampleapp(ip, port):
-    """Load the sample HTTP app only when requested, not on packet-route imports."""
+
     from .sampleapp import create_sampleapp as create
     return create(ip, port)

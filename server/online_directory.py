@@ -1,23 +1,10 @@
-"""Bounded, session-owned snapshots for stable discovery over lossy UDP."""
-
-from dataclasses import dataclass
-import re
 import threading
 import time
 import uuid
 
 from common.JsonPayloadCodec import JsonPayloadCodec
-from common.payload.user_info import UserInfo
 from common.payload.user_list_response import UserListResponse
 from server.account_exception import AccountException
-
-
-@dataclass(frozen=True)
-class _Snapshot:
-    owner: str
-    pages: tuple[UserListResponse, ...]
-    created: float
-    reference: int | None
 
 
 class OnlineDirectory:
@@ -27,62 +14,109 @@ class OnlineDirectory:
     def __init__(self, clock=time.monotonic):
         self._clock = clock
         self._lock = threading.RLock()
-        self._snapshots: dict[str, _Snapshot] = {}
+        self._snapshots = {}
 
-    def page(self, owner: str, cursor: str | None, users: tuple[UserInfo, ...],
-             reference: int | None = None) -> UserListResponse:
-        """Call only after authenticating this request, including all retries."""
+    def page(self, owner, cursor, users, reference=None):
+
         with self._lock:
             self.cleanup()
+
             if cursor is not None:
-                if not isinstance(cursor, str) or re.fullmatch(r"[a-f0-9]{32}:[1-9][0-9]{0,9}", cursor) is None:
-                    raise AccountException(1003, "INVALID_CURSOR")
-                identifier, index = cursor.split(":")
-                snapshot = self._snapshots.get(identifier)
-                if snapshot is None or snapshot.owner != owner or int(index) >= len(snapshot.pages):
-                    raise AccountException(1003, "INVALID_CURSOR")
-                return snapshot.pages[int(index)]
+                return self._read_page(owner, cursor)
+
+
             if reference is not None:
                 for snapshot in self._snapshots.values():
-                    if snapshot.owner == owner and snapshot.reference == reference:
-                        return snapshot.pages[0]
+                    if snapshot["owner"] == owner and snapshot["reference"] == reference:
+                        return snapshot["pages"][0]
 
             identifier = uuid.uuid4().hex
-            groups = []
-            group = []
-            for user in users:
-                candidate = (*group, user)
-                if not self._fits(UserListResponse(candidate, identifier + ":2147483647")):
-                    if not group:
-                        raise ValueError("Peer entry exceeds JSON payload limit")
-                    groups.append(tuple(group))
-                    group = []
-                    if not self._fits(UserListResponse((user,), identifier + ":2147483647")):
-                        raise ValueError("Peer entry exceeds JSON payload limit")
-                group.append(user)
-            if group or not groups:
-                groups.append(tuple(group))
-            pages = tuple(UserListResponse(group, f"{identifier}:{i + 1}" if i + 1 < len(groups) else None)
-                          for i, group in enumerate(groups))
-            for page in pages:
-                JsonPayloadCodec.encode(page)
-            owned = [key for key, value in self._snapshots.items() if value.owner == owner]
+            pages = self._split_users(users, identifier)
+
+            owned = []
+            for key, snapshot in self._snapshots.items():
+                if snapshot["owner"] == owner:
+                    owned.append(key)
             while len(owned) >= self.MAX_SNAPSHOTS_PER_SESSION:
-                del self._snapshots[owned.pop(0)]
-            self._snapshots[identifier] = _Snapshot(owner, pages, self._clock(), reference)
+                oldest = owned.pop(0)
+                del self._snapshots[oldest]
+
+            self._snapshots[identifier] = {
+                "owner": owner,
+                "pages": pages,
+                "created": self._clock(),
+                "reference": reference,
+            }
             return pages[0]
 
-    @staticmethod
-    def _fits(page: UserListResponse) -> bool:
+    def _read_page(self, owner, cursor):
+        if not isinstance(cursor, str):
+            raise AccountException(1003, "INVALID_CURSOR")
+        parts = cursor.split(":")
+        if len(parts) != 2:
+            raise AccountException(1003, "INVALID_CURSOR")
+        identifier, page_number = parts
+
+        if len(identifier) != 32:
+            raise AccountException(1003, "INVALID_CURSOR")
+        for character in identifier:
+            if character not in "0123456789abcdef":
+                raise AccountException(1003, "INVALID_CURSOR")
+        if len(page_number) < 1 or len(page_number) > 10:
+            raise AccountException(1003, "INVALID_CURSOR")
+        if not page_number.isascii() or not page_number.isdecimal() or page_number[0] == "0":
+            raise AccountException(1003, "INVALID_CURSOR")
+
+        snapshot = self._snapshots.get(identifier)
+        if snapshot is None or snapshot["owner"] != owner:
+            raise AccountException(1003, "INVALID_CURSOR")
+        index = int(page_number)
+        if index >= len(snapshot["pages"]):
+            raise AccountException(1003, "INVALID_CURSOR")
+        return snapshot["pages"][index]
+
+    def _split_users(self, users, identifier):
+        groups = []
+        group = []
+
+        reserved_cursor = identifier + ":9999999999"
+        for user in users:
+            candidate = group.copy()
+            candidate.append(user)
+            if not self._fits(UserListResponse(tuple(candidate), reserved_cursor)):
+                if len(group) == 0:
+                    raise ValueError("Peer entry exceeds JSON payload limit")
+                groups.append(tuple(group))
+                group = []
+                if not self._fits(UserListResponse((user,), reserved_cursor)):
+                    raise ValueError("Peer entry exceeds JSON payload limit")
+            group.append(user)
+        if len(group) > 0 or len(groups) == 0:
+            groups.append(tuple(group))
+
+        pages = []
+        for index in range(len(groups)):
+            if index + 1 < len(groups):
+                next_cursor = identifier + ":" + str(index + 1)
+            else:
+                next_cursor = None
+            pages.append(UserListResponse(groups[index], next_cursor))
+        return tuple(pages)
+
+    def _fits(self, page):
         try:
             JsonPayloadCodec.encode(page)
             return True
         except ValueError:
             return False
 
-    def cleanup(self, active_tokens: frozenset[str] | None = None) -> None:
+    def cleanup(self, active_tokens=None):
         with self._lock:
-            for key, snapshot in tuple(self._snapshots.items()):
-                if (self._clock() - snapshot.created >= self.TTL
-                        or (active_tokens is not None and snapshot.owner not in active_tokens)):
+            for key, snapshot in list(self._snapshots.items()):
+                expired = self._clock() - snapshot["created"] >= self.TTL
+                logged_out = False
+                if active_tokens is not None:
+                    if snapshot["owner"] not in active_tokens:
+                        logged_out = True
+                if expired or logged_out:
                     del self._snapshots[key]

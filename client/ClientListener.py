@@ -1,4 +1,3 @@
-
 from abc import ABC, abstractmethod
 
 from common.payload.user_info import UserInfo
@@ -8,7 +7,7 @@ from common.payload.presence_update import PresenceUpdate
 class ClientListener(ABC):
 
     def display_presence(self, update: PresenceUpdate) -> None:
-        """Optional hint; display_user_list receives reconciled snapshots."""
+
         pass
 
     @abstractmethod

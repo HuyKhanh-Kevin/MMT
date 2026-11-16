@@ -1,4 +1,3 @@
-
 from dataclasses import dataclass
 
 
@@ -12,7 +11,7 @@ class UserInfo:
     file_udp_port: int
 
     def __post_init__(self):
-        # Validate username
+
         if (
             not isinstance(self.username, str)
             or not 1 <= len(self.username) <= 32
@@ -22,11 +21,11 @@ class UserInfo:
                 "Username must contain 1-32 ASCII characters"
             )
 
-        # Validate status
+
         if self.status != "online":
             raise ValueError("Status must be online")
 
-        # Validate user ID
+
         if (
             type(self.user_id) is not int
             or not 1 <= self.user_id <= 0xFFFFFFFF
@@ -35,14 +34,14 @@ class UserInfo:
                 "User ID must be between 1 and 4294967295"
             )
 
-        # Validate IP
+
         if (
             not isinstance(self.ip, str)
             or not self.ip.strip()
         ):
             raise ValueError("Invalid peer IP")
 
-        # Validate ports
+
         if (
             type(self.tcp_port) is not int
             or not 1 <= self.tcp_port <= 65535
@@ -50,5 +49,3 @@ class UserInfo:
             or not 1 <= self.file_udp_port <= 65535
         ):
             raise ValueError("Invalid peer endpoint")
-
-    

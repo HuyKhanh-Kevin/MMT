@@ -1,5 +1,3 @@
-"""Exercise the Python implementation with real TCP/UDP sockets and clients."""
-
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 import json
@@ -68,7 +66,7 @@ class WireClient:
         login = JsonPayloadCodec.decode(response.payload, LoginResponse)
         UdpPacketIO.sendPacket(self.udp, self.address, self.packet(
             MT.HEARTBEAT, login.user_id, Heartbeat(login.session_id, 1)))
-        # Round trip behind the heartbeat establishes that the server received it.
+
         self.datagram(MT.USER_LIST_REQUEST, login.user_id, UserListRequest(login.session_id, None))
         return login
 

@@ -1,12 +1,5 @@
-"""Local account HTTP API using standard TCP sockets, without an HTTP framework.
-
-The native peer runs this process on its own machine. Only account endpoints are
-served; UI, chat/file listeners and payload encryption remain separate modules.
-"""
-
 import argparse
 import json
-import re
 import socket
 import threading
 import time
@@ -21,7 +14,6 @@ class AccountHttpServer:
         self._stop = threading.Event()
         self._lock = threading.Lock()
         self._clients = {}
-        self._slots = threading.BoundedSemaphore(32)
         self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
             self._socket.bind(("127.0.0.1", port))
@@ -45,34 +37,30 @@ class AccountHttpServer:
                 continue
             except OSError:
                 return
-            if not self._slots.acquire(False):
-                peer.close()
-                continue
             with self._lock:
-                if self._stop.is_set():
+                if self._stop.is_set() or len(self._clients) >= 32:
                     peer.close()
-                    self._slots.release()
-                    return
+                    continue
                 worker = threading.Thread(target=self._serve, args=(peer,), daemon=True)
                 self._clients[peer] = worker
                 worker.start()
 
-    @staticmethod
-    def _read_request(peer):
-        # One request per connection, with a total deadline and bounded framing.
+    def _read_more(self, peer, deadline):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("HTTP request timed out")
+        peer.settimeout(remaining)
+        chunk = peer.recv(4096)
+        if not chunk:
+            raise ValueError("Incomplete HTTP request")
+        return chunk
+
+    def _read_request(self, peer):
+
         deadline = time.monotonic() + 5
         data = bytearray()
-        def receive():
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise TimeoutError("HTTP request timed out")
-            peer.settimeout(remaining)
-            chunk = peer.recv(4096)
-            if not chunk:
-                raise ValueError("Incomplete HTTP request")
-            return chunk
         while b"\r\n\r\n" not in data:
-            data.extend(receive())
+            data.extend(self._read_more(peer, deadline))
             if len(data) > 10240:
                 raise ValueError("Request too large")
         head, body = bytes(data).split(b"\r\n\r\n", 1)
@@ -85,8 +73,11 @@ class AccountHttpServer:
         headers = {}
         for line in lines[1:]:
             key, value = line.split(":", 1)
-            if not re.fullmatch(r"[A-Za-z0-9-]+", key):
+            if key == "" or not key.isascii():
                 raise ValueError("Invalid header")
+            for character in key:
+                if not character.isalnum() and character != "-":
+                    raise ValueError("Invalid header")
             key = key.lower()
             if key in headers:
                 raise ValueError("Duplicate header")
@@ -98,7 +89,7 @@ class AccountHttpServer:
             raise ValueError("Invalid content length")
         size = int(size)
         while len(body) < size:
-            body += receive()
+            body += self._read_more(peer, deadline)
         if len(body) != size:
             raise ValueError("Pipelined/trailing data are not supported")
         return method, path, headers, body
@@ -107,8 +98,10 @@ class AccountHttpServer:
         try:
             try:
                 method, path, headers, body = self._read_request(peer)
-                hosts = {f"127.0.0.1:{self.port}", f"localhost:{self.port}"}
-                origins = {"http://" + host for host in hosts}
+                hosts = [f"127.0.0.1:{self.port}", f"localhost:{self.port}"]
+                origins = []
+                for host in hosts:
+                    origins.append("http://" + host)
                 if headers.get("host") not in hosts or (
                         "origin" in headers and headers["origin"] not in origins):
                     status, result = 403, {"status": "failed", "reason": "ORIGIN_NOT_ALLOWED"}
@@ -132,7 +125,6 @@ class AccountHttpServer:
             pass
         finally:
             peer.close()
-            self._slots.release()
             with self._lock:
                 self._clients.pop(peer, None)
 

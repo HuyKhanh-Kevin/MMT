@@ -36,22 +36,31 @@ backend khi được configure_account_sessions(), không còn trả login thàn
 
 ## Cách tổ chức đã rút gọn
 
-- Message type dùng trực tiếp số nguyên trong common.MessageType, không có lớp
-  chuyển đổi Enum/chuỗi hex riêng ở client.
-- Client xử lý từng request account theo thứ tự. Một hàng đợi nhận reply là đủ;
-  không cần hai bảng Future cho TCP và UDP. Reply vẫn được đối chiếu transport
-  và sequence. Đóng kết nối đánh thức request đang chờ.
-- Server giữ một dictionary session theo token. Với quy mô 10–20 client của đề,
-  tìm user/kết nối bằng vòng lặp rõ ràng, không cần đồng bộ thêm hai bảng chỉ mục.
-- Luồng cập nhật danh sách chỉ khởi động khi UI đăng ký on_users. Client chỉ dùng
-  signup/login/heartbeat không tạo thêm luồng này.
-- Snapshot dùng dict thông thường, không cần OrderedDict.
+- Chọn xử lý TCP, UDP và HTTP bằng if/elif/else, gọi thẳng hàm signup/login/logout.
+- Kiểm tra username, password và cursor từng bước bằng if và for.
+- Tạo danh sách bằng vòng lặp for và append, không dùng lambda hoặc biểu thức
+  lồng nhiều lớp. Danh sách tạm cho discovery được lưu bằng dict.
+- Các tác vụ nền dùng threading.Thread và Queue. Một luồng gọi callback của UI;
+  callback không chạy ngay trong luồng nhận packet để tránh chờ nhau.
+- Server giữ một dictionary session theo token. Tìm user/kết nối bằng vòng lặp.
+  ID kết nối TCP là số tăng dần; giới hạn client được kiểm tra bằng len().
+- Client xử lý từng request account theo thứ tự và chờ một hàng đợi phản hồi.
+  Reply vẫn phải khớp transport và sequence. Đóng kết nối đánh thức request đang chờ.
 
 Khóa dữ liệu dùng chung, hash mật khẩu, heartbeat/timeout, retry UDP và phân trang
 vẫn cần giữ: chúng giải quyết truy cập đồng thời, xác thực, mất gói và giới hạn
 kích thước packet. Đây là lựa chọn triển khai dựa trên lý thuyết, không phải mọi
-chi tiết đều phải có nguyên mẫu trong slide. Cầu nối HTTP và các API tương thích
-đang có caller/test nên xóa chúng sẽ làm mất chức năng tương ứng.
+chi tiết đều phải có nguyên mẫu trong slide. API HTTP vẫn được giữ để UI tích hợp.
+Các lớp dữ liệu chung vẫn giữ định dạng cũ để tương thích với các module khác.
+
+## Thứ tự đọc code
+
+1. tracker_server.py: mở TCP/UDP, nhận packet và gọi handler.
+2. account_request_handler.py: nhìn messageType rồi chọn nhánh if/elif.
+3. auth_routes.py → account_store.py / session_registry.py: xử lý tài khoản và phiên.
+4. tracker_routes.py → session_registry.py / online_directory.py: heartbeat và danh sách online.
+5. account_http_routes.py: chọn endpoint HTTP và gọi AccountSessions.
+6. AccountClient.py và account_demo.py: gửi request, nhận reply và thao tác từ CLI.
 
 ## Account và lưu trữ
 

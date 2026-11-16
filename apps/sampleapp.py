@@ -25,15 +25,17 @@ from   daemon import StreapRous
 
 app = StreapRous()
 
-# Account endpoints share persistent tracker sessions across HTTP requests.
-# The application owner supplies AccountSessions once at startup, on the peer host.
+
 _account_routes = None
 
 
 def configure_account_sessions(sessions):
     from apps.routes.account_http_routes import AccountHttpRoutes
     global _account_routes
-    _account_routes = AccountHttpRoutes(sessions) if sessions is not None else None
+    if sessions is None:
+        _account_routes = None
+    else:
+        _account_routes = AccountHttpRoutes(sessions)
 
 
 def _account_response(method, path, headers, body):
@@ -41,8 +43,8 @@ def _account_response(method, path, headers, body):
         result = {"status": "failed", "reason": "ACCOUNT_API_NOT_CONFIGURED"}
     else:
         _, result = _account_routes.dispatch(method, path, headers, body)
-    # Existing StreapRous hook contract returns bytes. The standalone account
-    # HTTP host also propagates HTTP status codes, framing and origin checks.
+
+
     return json.dumps(result).encode("utf-8")
 
 

@@ -1,4 +1,3 @@
-
 from dataclasses import dataclass, asdict
 from typing import Optional
 
@@ -11,11 +10,11 @@ class LoginResponse:
     reason: Optional[str] = None
 
     def __post_init__(self):
-        # Validate status
+
         if type(self.status) is not str or self.status not in ("success", "failed"):
             raise ValueError("Invalid login status")
 
-        # Validate field types
+
         if self.session_id is not None and not isinstance(self.session_id, str):
             raise TypeError("session_id must be a string")
 
@@ -25,7 +24,7 @@ class LoginResponse:
         if self.reason is not None and not isinstance(self.reason, str):
             raise TypeError("reason must be a string")
 
-        # Validate successful login
+
         if self.status == "success":
             if not self.session_id or not self.session_id.strip():
                 raise ValueError("Successful login requires a valid session_id")
@@ -36,7 +35,7 @@ class LoginResponse:
             if self.reason is not None:
                 raise ValueError("Successful login must not have a reason")
 
-        # Validate failed login
+
         else:
             if self.session_id is not None or self.user_id is not None:
                 raise ValueError("Failed login must not contain session_id or user_id")

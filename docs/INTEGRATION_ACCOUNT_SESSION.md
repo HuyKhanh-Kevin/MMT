@@ -63,15 +63,22 @@ Bind/listen socket peer trước, truyền cổng thực cho AccountClient:
 ```python
 from client.AccountClient import AccountClient
 
+def display_presence(update):
+    print(update.username, update.status)
+
 with AccountClient(server_ip, 5000, 5000,
                    peer_socket.getsockname()[1],
                    file_socket.getsockname()[1]) as account:
-    account.on_presence(lambda update: print(update.username, update.status))
+    account.on_presence(display_presence)
     result = account.login("alice", "password123")
     if result.status == "success":
         users = account.online_users()
-        other = next((u for u in users if u.user_id != account.user_id), None)
-        if other:
+        other = None
+        for user in users:
+            if user.user_id != account.user_id:
+                other = user
+                break
+        if other is not None:
             endpoint = account.peer_endpoint(other.user_id)
             # Module chat/file dùng endpoint.tcp và endpoint.file_udp.
         account.logout()
@@ -149,7 +156,7 @@ transport/UI của StreapRous không được viết lại trong thay đổi acc
 
 ## Kiểm thử
 
-Kết quả ngày 14/11/2026 trên Windows/Python 3.12: **152 lượt test, OK, 37,361 giây**,
+Kết quả ngày 16/11/2026 trên Windows/Python 3.12: **152 lượt test, OK, 48,650 giây**,
 gồm 46 test trong test/server và 106 lượt từ bộ test chung hiện có.
 Bộ MasterIntegrationTest hiện chạy lại một số test integration, nên đây là số
 lượt thực thi unittest, không phải 152 tình huống độc lập.
@@ -183,6 +190,8 @@ tracker disconnect, HTTP framing/origin và hook sampleapp xác thực thật.
 Hai test sau khi rút gọn kiểm tra nhiều lời gọi discovery đồng thời trên cùng
 client và đóng kết nối lúc đang chờ reply UDP. Toàn bộ 150 lượt test trước đó
 được giữ nguyên.
+Lần viết lại theo if/elif và vòng lặp for giữ nguyên toàn bộ 152 lượt test;
+bao gồm TCP/UDP, 20 client, timeout, discovery, callback và API HTTP.
 
 Đặc tả: [ACCOUNT_PROTOCOL_PYTHON.md](ACCOUNT_PROTOCOL_PYTHON.md).
 Giải thích mã: [ACCOUNT_SESSION_PRESENCE.md](ACCOUNT_SESSION_PRESENCE.md).

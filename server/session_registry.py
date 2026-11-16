@@ -1,13 +1,9 @@
-"""Thread-safe session lifecycle, independent of sockets and packet encoding."""
-
-from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import ipaddress
 import secrets
 import threading
 import time
-from uuid import UUID
 
 from common.payload.presence_update import PresenceUpdate
 from common.payload.user_info import UserInfo
@@ -43,7 +39,7 @@ class _Session:
     ip: str
     tcp_port: int
     file_udp_port: int
-    connection: UUID
+    connection: object
     last_heartbeat: float
     last_seen: datetime
     heartbeat_seq: int = 0
@@ -64,9 +60,9 @@ class SessionRegistry:
         self._clock = clock
         self._lock = threading.RLock()
         self._sessions: dict[str, _Session] = {}
-        self._changes: deque[PresenceUpdate] = deque()
-        self._disconnected: deque[UUID] = deque()
-        self._expired_connections: set[UUID] = set()
+        self._changes = []
+        self._disconnected = []
+        self._expired_connections = set()
 
     def _expired(self, session: _Session) -> bool:
         return self._clock() - session.last_heartbeat >= self.timeout
@@ -80,7 +76,7 @@ class SessionRegistry:
             self._disconnected.append(session.connection)
 
     def login(self, account: Account, ip: str, tcp_port: int, file_udp_port: int,
-              connection: UUID) -> CreatedSession:
+              connection) -> CreatedSession:
         for port in (tcp_port, file_udp_port):
             if type(port) is not int or not 1 <= port <= 65535:
                 raise AccountException(1003, "INVALID_PORT")
@@ -103,19 +99,24 @@ class SessionRegistry:
             self._changes.append(PresenceUpdate(account.username, "online"))
             return CreatedSession(token, session.peer())
 
-    def has_session(self, connection: UUID) -> bool:
+    def has_session(self, connection) -> bool:
         with self._lock:
-            return any(session.connection == connection and not self._expired(session)
-                       for session in self._sessions.values())
+            for session in self._sessions.values():
+                if session.connection == connection and not self._expired(session):
+                    return True
+            return False
 
     def _require(self, token: str, sender: int) -> _Session:
         session = self._sessions.get(token)
-        if (session is None or type(sender) is not int
-                or session.account.user_id != sender or self._expired(session)):
+        if session is None:
+            raise AccountException(1004, "UNAUTHENTICATED")
+        if type(sender) is not int or session.account.user_id != sender:
+            raise AccountException(1004, "UNAUTHENTICATED")
+        if self._expired(session):
             raise AccountException(1004, "UNAUTHENTICATED")
         return session
 
-    def authenticate_tcp(self, token: str, sender: int, connection: UUID) -> Peer:
+    def authenticate_tcp(self, token: str, sender: int, connection) -> Peer:
         with self._lock:
             session = self._require(token, sender)
             if session.connection != connection:
@@ -124,9 +125,11 @@ class SessionRegistry:
 
     def _udp_session(self, token: str, sender: int, source: tuple[str, int]) -> _Session:
         session = self._require(token, sender)
-        if (session.ip != source[0]
-                or (session.endpoint is not None and session.endpoint != source)):
+        if session.ip != source[0]:
             raise AccountException(1004, "UNAUTHENTICATED")
+        if session.endpoint is not None:
+            if session.endpoint != source:
+                raise AccountException(1004, "UNAUTHENTICATED")
         return session
 
     def authenticate_udp(self, token: str, sender: int, source: tuple[str, int]) -> Peer:
@@ -151,14 +154,17 @@ class SessionRegistry:
     def discover(self, token: str, sender: int, source: tuple[str, int]) -> tuple[UserInfo, ...]:
         with self._lock:
             self.authenticate_udp(token, sender, source)
-            return tuple(peer.user_info() for peer in self.online_peers())
+            users = []
+            for peer in self.online_peers():
+                users.append(peer.user_info())
+            return tuple(users)
 
-    def logout(self, token: str, sender: int, connection: UUID) -> None:
+    def logout(self, token: str, sender: int, connection) -> None:
         with self._lock:
             self.authenticate_tcp(token, sender, connection)
             self._remove(self._sessions[token])
 
-    def disconnect(self, connection: UUID) -> None:
+    def disconnect(self, connection) -> None:
         with self._lock:
             self._expired_connections.discard(connection)
             for session in self._sessions.values():
@@ -174,8 +180,15 @@ class SessionRegistry:
 
     def online_peers(self) -> tuple[Peer, ...]:
         with self._lock:
-            return tuple(sorted((s.peer() for s in self._sessions.values() if not self._expired(s)),
-                                key=lambda peer: peer.user_id))
+            peers_by_id = {}
+            for session in self._sessions.values():
+                if not self._expired(session):
+                    peers_by_id[session.account.user_id] = session.peer()
+
+            peers = []
+            for user_id in sorted(peers_by_id):
+                peers.append(peers_by_id[user_id])
+            return tuple(peers)
 
     def find_online_user(self, user_id: int) -> Peer | None:
         with self._lock:
@@ -186,7 +199,11 @@ class SessionRegistry:
 
     def active_tokens(self) -> frozenset[str]:
         with self._lock:
-            return frozenset(s.token for s in self._sessions.values() if not self._expired(s))
+            tokens = []
+            for session in self._sessions.values():
+                if not self._expired(session):
+                    tokens.append(session.token)
+            return frozenset(tokens)
 
     def drain_changes(self) -> tuple[PresenceUpdate, ...]:
         with self._lock:
@@ -194,7 +211,7 @@ class SessionRegistry:
             self._changes.clear()
             return changes
 
-    def drain_disconnected_connections(self) -> tuple[UUID, ...]:
+    def drain_disconnected_connections(self) -> tuple:
         with self._lock:
             connections = tuple(self._disconnected)
             self._disconnected.clear()

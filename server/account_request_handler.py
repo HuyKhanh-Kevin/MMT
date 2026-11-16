@@ -1,5 +1,3 @@
-"""Validate account envelopes and route requests without owning sockets/threads."""
-
 from apps.routes.auth_routes import AuthRoutes
 from apps.routes.tracker_routes import TrackerRoutes
 from common.ControlPackets import ControlPackets
@@ -15,34 +13,60 @@ class AccountRequestHandler:
         self.tracker = TrackerRoutes(sessions, directory)
 
     def handle_tcp(self, connection, source_ip, request):
-        return self._handle(request, self.auth.routes, connection, source_ip)
-
-    def handle_udp(self, request, source):
-        return self._handle(request, self.tracker.routes, source)
-
-    def _handle(self, request, routes, *context):
         try:
-            # Adapters calling the handler directly get the same checks as PacketIO.
-            PacketCodec.encode(request)
-            header = request.header
-            if header.flags != 0 or header.streamID != 0 or header.sequenceNumber == 0 or header.receiverID != 0:
-                raise AccountException(1003, "INVALID_CONTROL_HEADER")
-            route = routes.get(header.messageType)
-            if route is None:
+            self._check_header(request)
+            message_type = request.header.messageType
+
+            if message_type == MessageType.SIGNUP_REQUEST:
+                result = self.auth.signup(request, connection, source_ip)
+            elif message_type == MessageType.LOGIN_REQUEST:
+                result = self.auth.login(request, connection, source_ip)
+            elif message_type == MessageType.LOGOUT_REQUEST:
+                result = self.auth.logout(request, connection, source_ip)
+            else:
                 raise AccountException(1003, "UNSUPPORTED_MESSAGE")
-            result = route(request, *context)
-            if result is None:
-                return None
-            message_type, receiver, body = result
-            return ControlPackets.create(str(message_type), header.sequenceNumber, 0, receiver, body)
-        except AccountException as exc:
-            return self.error(request, exc.code, exc.reason)
+
+            response_type, receiver, body = result
+            return ControlPackets.create(
+                str(response_type), request.header.sequenceNumber, 0, receiver, body
+            )
+        except AccountException as error:
+            return self.error(request, error.code, error.reason)
         except (ValueError, TypeError, RecursionError):
             return self.error(request, 1003, "INVALID_PAYLOAD")
+
+    def handle_udp(self, request, source):
+        try:
+            self._check_header(request)
+            message_type = request.header.messageType
+
+            if message_type == MessageType.HEARTBEAT:
+                self.tracker.heartbeat(request, source)
+                return None
+            elif message_type == MessageType.USER_LIST_REQUEST:
+                response_type, receiver, body = self.tracker.users(request, source)
+                return ControlPackets.create(
+                    str(response_type), request.header.sequenceNumber, 0, receiver, body
+                )
+            else:
+                raise AccountException(1003, "UNSUPPORTED_MESSAGE")
+        except AccountException as error:
+            return self.error(request, error.code, error.reason)
+        except (ValueError, TypeError, RecursionError):
+            return self.error(request, 1003, "INVALID_PAYLOAD")
+
+    def _check_header(self, request):
+        PacketCodec.encode(request)
+        header = request.header
+        if header.flags != 0 or header.streamID != 0:
+            raise AccountException(1003, "INVALID_CONTROL_HEADER")
+        if header.sequenceNumber == 0 or header.receiverID != 0:
+            raise AccountException(1003, "INVALID_CONTROL_HEADER")
 
     @staticmethod
     def error(request, code, reason):
         header = request.header
-        return ControlPackets.create(str(MessageType.ERROR), header.sequenceNumber,
-                                     0, header.senderID,
-                                     ErrorPayload(code, reason, header.streamID, header.sequenceNumber))
+        body = ErrorPayload(code, reason, header.streamID, header.sequenceNumber)
+        return ControlPackets.create(
+            str(MessageType.ERROR), header.sequenceNumber, 0, header.senderID, body
+        )

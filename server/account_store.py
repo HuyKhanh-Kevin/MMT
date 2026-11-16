@@ -1,12 +1,9 @@
-"""Persistent accounts. Use one AccountStore instance per database/server process."""
-
 import base64
 import hashlib
 import hmac
 import json
 import os
 from pathlib import Path
-import re
 import secrets
 import tempfile
 import threading
@@ -33,12 +30,25 @@ class AccountStore:
             self._load()
 
     @staticmethod
-    def validate_credentials(username: str, password: str) -> None:
-        if (not isinstance(username, str)
-                or re.fullmatch(r"[A-Za-z0-9_]{1,32}", username) is None
-                or not isinstance(password, str)
-                or re.fullmatch(r"[\x20-\x7e]{8,128}", password) is None):
+    def _check_username(username):
+        if not isinstance(username, str):
             raise AccountException(1003, "INVALID_CREDENTIALS_FORMAT")
+        if len(username) < 1 or len(username) > 32 or not username.isascii():
+            raise AccountException(1003, "INVALID_CREDENTIALS_FORMAT")
+        for character in username:
+            if not character.isalnum() and character != "_":
+                raise AccountException(1003, "INVALID_CREDENTIALS_FORMAT")
+
+    @staticmethod
+    def validate_credentials(username: str, password: str) -> None:
+        AccountStore._check_username(username)
+        if not isinstance(password, str):
+            raise AccountException(1003, "INVALID_CREDENTIALS_FORMAT")
+        if len(password) < 8 or len(password) > 128:
+            raise AccountException(1003, "INVALID_CREDENTIALS_FORMAT")
+        for character in password:
+            if ord(character) < 32 or ord(character) > 126:
+                raise AccountException(1003, "INVALID_CREDENTIALS_FORMAT")
 
     def _load(self) -> None:
         try:
@@ -53,14 +63,18 @@ class AccountStore:
                     raise ValueError("Invalid account record")
                 user_id = entry["user_id"]
                 name = entry["username"]
-                self.validate_credentials(name, "validation-only")
-                if (type(user_id) is not int or not 1 <= user_id <= 0xFFFFFFFF
-                        or user_id in ids or name in self._accounts
-                        or type(entry["iterations"]) is not int
-                        or not 1 <= entry["iterations"] <= 2_000_000
-                        or len(base64.b64decode(entry["salt"], validate=True)) != 16
-                        or len(base64.b64decode(entry["password_hash"], validate=True)) != 32):
-                    raise ValueError("Invalid account record")
+                self._check_username(name)
+                if type(user_id) is not int or not 1 <= user_id <= 0xFFFFFFFF:
+                    raise ValueError("Invalid user ID")
+                if user_id in ids or name in self._accounts:
+                    raise ValueError("Duplicate account")
+                iterations = entry["iterations"]
+                if type(iterations) is not int or not 1 <= iterations <= 2_000_000:
+                    raise ValueError("Invalid hash iterations")
+                if len(base64.b64decode(entry["salt"], validate=True)) != 16:
+                    raise ValueError("Invalid salt")
+                if len(base64.b64decode(entry["password_hash"], validate=True)) != 32:
+                    raise ValueError("Invalid password hash")
                 ids.add(user_id)
                 self._accounts[name] = entry
                 self._next_id = max(self._next_id, user_id + 1)
@@ -79,7 +93,7 @@ class AccountStore:
         salt = secrets.token_bytes(16)
         digest = self._hash(password, salt, self.ITERATIONS)
         with self._lock:
-            # Hash outside the lock; recheck before publishing concurrent signups.
+
             if username in self._accounts:
                 raise AccountException(1002, "USERNAME_TAKEN")
             if self._next_id > 0xFFFFFFFF:
@@ -88,7 +102,8 @@ class AccountStore:
                          salt=base64.b64encode(salt).decode("ascii"),
                          password_hash=base64.b64encode(digest).decode("ascii"),
                          iterations=self.ITERATIONS)
-            updated = sorted([*self._accounts.values(), entry], key=lambda row: row["user_id"])
+            updated = list(self._accounts.values())
+            updated.append(entry)
             self._persist(updated)
             self._accounts[username] = entry
             self._next_id += 1
@@ -96,7 +111,7 @@ class AccountStore:
 
     def _persist(self, entries: list[dict]) -> None:
         self.file.parent.mkdir(parents=True, exist_ok=True)
-        # Same-directory replacement avoids publishing a partially written database.
+
         temporary = None
         try:
             with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=self.file.parent,
@@ -114,11 +129,16 @@ class AccountStore:
         self.validate_credentials(username, password)
         with self._lock:
             entry = self._accounts.get(username)
-        # Do a hash even for unknown usernames, using the same default work factor.
-        salt = base64.b64decode(entry["salt"]) if entry else bytes(16)
-        iterations = entry["iterations"] if entry else self.ITERATIONS
+
+        if entry is None:
+            salt = bytes(16)
+            iterations = self.ITERATIONS
+            expected = bytes(32)
+        else:
+            salt = base64.b64decode(entry["salt"])
+            iterations = entry["iterations"]
+            expected = base64.b64decode(entry["password_hash"])
         digest = self._hash(password, salt, iterations)
-        expected = base64.b64decode(entry["password_hash"]) if entry else bytes(32)
         if not hmac.compare_digest(digest, expected) or entry is None:
             raise AccountException(1001, "INVALID_CREDENTIALS")
         return Account(entry["user_id"], entry["username"])

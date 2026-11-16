@@ -170,7 +170,10 @@ class Response():
             self.headers['Content-Type']='image/{}'.format(sub_type)
         elif main_type == 'application':
             base_dir = BASE_DIR+"apps/"
-            self.headers['Content-Type']='application/{}'.format(sub_type)
+            self.headers['Content-Type']='application/{}'.format(sub_type)       
+        elif main_type == 'multipart':
+            base_dir = BASE_DIR + "static/"
+            self.headers['Content-Type']='multipart/{}'.format(sub_type)
         #
         #  TODO: process other mime_type
         #        application/xml       
@@ -294,6 +297,8 @@ class Response():
         elif mime_type == 'application/json' or mime_type == 'application/octet-stream':
             base_dir = self.prepare_content_type(mime_type = 'application/json')
             envelop_content = ""
+        elif mime_type == 'multipart/form-data':
+            base_dir = self.prepare_content_type(mime_type = 'multipart/form-data')
 
         #
         # TODO: add support objects

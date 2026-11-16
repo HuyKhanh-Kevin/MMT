@@ -122,8 +122,33 @@ class HttpAdapter:
         resp = self.response
 
         # Handle the request
-        msg = conn.recv(1024).decode()
-        req.prepare(msg, routes)
+        buffer = b""
+        delimiter = b"\r\n\r\n"
+
+        # Read HTTP headers
+        while delimiter not in buffer:
+            chunk = conn.recv(1024)
+            if not chunk:
+                raise ConnectionError("Socket closed before receiving full HTTP headers")
+            buffer += chunk
+
+        header_bytes, remaining_body_bytes = buffer.split(delimiter, 1)
+        header_str = header_bytes.decode("utf-8")
+        headers = req.prepare_headers(header_str)
+        
+        
+        content_length = int(headers.get("content-length", 0))
+        body = remaining_body_bytes[:content_length]
+        
+        while len(body) < content_length:
+            chunk = conn.recv(1024)
+            if not chunk:
+                raise ConnectionError("Incomplete HTTP request body")
+            body += chunk
+
+        buffer = header_bytes + delimiter + body
+        req.prepare(buffer.decode("utf-8"), routes)
+
         print("[HttpAdapter] Invoke handle_client connection {}".format(addr))
 
         # Handle request hook
@@ -133,7 +158,18 @@ class HttpAdapter:
                 #
                 # TODO: handle for App hook here
                 #
-                response = b""
+                
+                payload = req.hook(headers=req.headers, body=req.body)
+                if inspect.isawaitable(payload):
+                    payload = asyncio.run(payload)
+                header = (
+                    "HTTP/1.1 200 OK\r\n"
+                    "Content-Type: application/json\r\n"
+                    f"Content-Length: {len(payload)}\r\n"
+                    "Connection: close\r\n\r\n"
+                )
+                response = header.encode("utf-8") + payload
+                # response = b""
             else:
                 # Build response
                 response = resp.build_response(req)
@@ -187,7 +223,7 @@ class HttpAdapter:
                 f"Content-Length: {len(payload)}\r\n"
                 "Connection: close\r\n\r\n"
             )
-            response = header.encode("ascii") + payload
+            response = header.encode("utf-8") + payload
         else:
             response = resp.build_response(req)
         
@@ -207,6 +243,7 @@ class HttpAdapter:
         # TODO run_conn_send packet
         # close_connection(...)
         close_connection(raw_socket, conn_info)
+
     async def handle_client_coroutine(self, reader, writer):
         """
         Handle an incoming client connection using stream reader writer asynchronously.
@@ -220,29 +257,74 @@ class HttpAdapter:
         :param routes (dict): The route mapping for dispatching requests.
         """
         # Request handler
-        req = self.request
+        # req = self.request
+        req = Request()
         # Response handler
-        resp = self.response
+        # resp = self.response
+        resp = Response()
 
-        print("[HttpAdapter] Invoke handle_client_coroutine connection {})".format(addr))
         addr = writer.get_extra_info("peername")
+        print("[HttpAdapter] Invoke handle_client_coroutine connection {})".format(addr))
 
+        # Handle the request
+        buffer = b""
+        delimiter = b"\r\n\r\n"
+
+        # Read HTTP headers
+        while delimiter not in buffer:
+            chunk = await reader.read(1024)
+            if not chunk:
+                raise ConnectionError("Socket closed before receiving full HTTP headers")
+            buffer += chunk
+
+        header_bytes, remaining_body_bytes = buffer.split(delimiter, 1)
+        header_str = header_bytes.decode("utf-8")
+        headers = req.prepare_headers(header_str)
+        
+        
+        content_length = int(headers.get("content-length", 0))
+        body = remaining_body_bytes[:content_length]
+        
+        while len(body) < content_length:
+            chunk = await reader.read(1024)
+            if not chunk:
+                raise ConnectionError("Incomplete HTTP request body")
+            body += chunk
+
+        buffer = header_bytes + delimiter + body
         # TODO Handle the request asynchronously
-        msg = await reader.read(1024)
+        # msg = await reader.read(1024)
 
 
-        req.prepare(msg.decode("utf-8"), routes={})
+        req.prepare(buffer.decode("utf-8"), routes=self.routes)
 
         # Handle request hook
-        if req.hook:
-            #
-            # TODO: handle for App hook here
-            #
-            response = ""
+        response = b""
+        try:
+            if req.hook:
+                #
+                # TODO: handle for App hook here
+                #
+                payload = req.hook(headers=req.headers, body=req.body)
+                if inspect.isawaitable(payload):
+                    payload = await payload
+
+                header = (
+                    "HTTP/1.1 200 OK\r\n"
+                    "Content-Type: application/json\r\n"
+                    f"Content-Length: {len(payload)}\r\n"
+                    "Connection: close\r\n\r\n"
+                )
+                response = header.encode("utf-8") + payload
+            else:
+                response = resp.build_response(req)
+        except Exception as e:
+            print("[HttpAdapter] Error building response: {}".format(e))
+            response = b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n"
 
         # Build response
-        #print("[HttpAdapter] Start **ASYNC** build_response with type {}".format(type(req)))
-        response = resp.build_response(req)
+        # print("[HttpAdapter] Start **ASYNC** build_response with type {}".format(type(req)))
+        # response = resp.build_response(req)
 
         # Send all the response asynchronously
         writer.write(response)
@@ -258,7 +340,7 @@ class HttpAdapter:
         :rtype: cookies - A dictionary of cookie key-value pairs.
         """
         cookies = {}
-        for header in headers:
+        for header in self.headers:
             if header.startswith("Cookie:"):
                 cookie_str = header.split(":", 1)[1].strip()
                 for pair in cookie_str.split(";"):
@@ -286,7 +368,7 @@ class HttpAdapter:
             response.url = req.url
 
         # Add new cookies from the server.
-        response.cookies = extract_cookies(req)
+        response.cookies = self.extract_cookies(req)
 
         # Give the Response some context.
         response.request = req

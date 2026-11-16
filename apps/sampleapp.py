@@ -24,7 +24,7 @@ import os
 import importlib.util
 import json
 
-from   daemon import StreapRous
+from  daemon import StreapRous
 
 app = StreapRous()
 
@@ -51,7 +51,7 @@ def echo(headers="guest", body="anonymous"):
     print("[SampleApp] received body {}".format(body))
 
     try:
-        message = json.loads(body)
+        message = json.loads(json.dumps(body))
         data = {"received": message }
         # Convert to JSON string
         json_str = json.dumps(data)
@@ -80,6 +80,57 @@ async def hello(headers, body):
     # Convert to JSON string
     json_str = json.dumps(data)
     return (json_str.encode("utf-8"))
+
+@app.route('/upload', methods=['POST'])
+def upload_file(headers, body):
+    try:
+        # Get file and prepare folder
+        filename = headers.get(
+            'x-filename', 'upload.bin'
+        )
+
+        filename = os.path.basename(
+            filename.replace('\\', '/')
+        )
+
+        if not filename:
+            return json.dumps({
+                "error": "Invalid filename"
+            }).encode("utf-8")
+
+        upload_dir = os.path.join(
+            os.path.dirname(__file__),
+            "uploads"
+        )
+        os.makedirs(upload_dir, exist_ok=True)
+
+        # Get file bytes
+        if isinstance(body, str):
+            file_content = body.encode("utf-8")
+        elif isinstance(body, bytes):
+            file_content = body
+        else:
+            raise TypeError("Invalid file body")
+
+        # Save file
+        filepath = os.path.join(upload_dir, filename)
+
+        with open(filepath, "wb") as f:
+            f.write(file_content)
+
+        # Return JSON response
+        result = {
+            "message": "Upload successful",
+            "filename": filename,
+            "size": len(file_content)
+        }
+
+        return json.dumps(result).encode("utf-8")
+
+    except Exception as e:
+        return json.dumps({
+            "error": str(e)
+        }).encode("utf-8")
 
 def create_sampleapp(ip, port):
     # Prepare and launch the RESTful application

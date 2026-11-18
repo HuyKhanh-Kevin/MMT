@@ -1,7 +1,7 @@
 import socket
 import threading
 from dataclasses import dataclass
-from uuid import uuid4
+from pathlib import Path
 
 from common.FileChunkCodec import FileChunkCodec
 from common.JsonPayloadCodec import JsonPayloadCodec
@@ -45,6 +45,8 @@ class FileTransfer:
 
         self.lock = threading.Lock()
 
+        self.destination_path: Path = Path.home() / "Downloads"
+
     def set_file_connection(self, connection: FileConnection):
         self.connection = connection
 
@@ -55,27 +57,40 @@ class FileTransfer:
             if connection is not None:
                 PacketIO.writePacket(connection, packet)
 
-    def peer_tcp_receiving_loop(self, peer_ip: str):
-        connection = self.connection.get_peer_tcp_connection(peer_ip)
+    def peer_tcp_receiving_loop(self, connection: socket.socket) -> None:
         if connection is not None:
             try:
                 while self.client.get_running():
                     packet = PacketIO.readPacket(connection)
 
-                    if packet is None: continue
+                    if packet is None: break
 
                     header = packet.getHeader()
-                    if header.message_type == MessageType.FILE_REQUEST: pass
-                    elif header.message_type == MessageType.FILE_ACCEPTED: pass
-                    elif header.message_type == MessageType.FILE_REJECTED: pass
-                    elif header.message_type == MessageType.FILE_DONE: pass
-                    elif header.message_type == MessageType.ERROR_FILE: pass
+                    if header.getMessageType() == MessageType.FILE_REQUEST:
+                        response: FileReq = JsonPayloadCodec.decode(packet.getPayload(), FileReq)
+
+                        file_io = FileIO()
+                        file_io.open_destination(self.destination_path / response.file_name)
+                        file_io.file_name = response.file_name
+                        file_io.file_size = response.file_size
+                        file_io.file_checksum = response.checksum
+
+                        self.active_transfer[response.file_id] = TransferSession(response.file_id, header.getSenderID(), (connection.getpeername()[0], response.sender_udp_port), file_io, response.file_size, response.total_chunks, response.checksum)
+
+                        file_acp = self.create_file_accept_packet(header.getSenderID(), response.file_id)
+                        with self.lock:
+                            PacketIO.writePacket(connection, file_acp)
+
+                    elif header.getMessageType() == MessageType.FILE_ACCEPTED: pass
+                    elif header.getMessageType() == MessageType.FILE_REJECTED: pass
+                    elif header.getMessageType() == MessageType.FILE_DONE: pass
+                    elif header.getMessageType() == MessageType.ERROR_FILE: pass
 
             except (OSError, EOFError) as error:
                 if self.client.get_running():
                     print(f"TCP error: {error}")
             finally:
-                self.connection.remove_peer_connection(peer_ip)
+                self.connection.remove_peer_connection(connection)
 
     def peer_udp_sending(self, peer_ip: str, peer_udp_port: int, packet: Packet) -> None:
         UdpPacketIO.sendPacket(self.connection.file_udp_socket, (peer_ip, peer_udp_port), packet)

@@ -52,7 +52,6 @@ class FileConnection:
             if self.peer_tcp_connections.get(address[0]) is None:
                 self.peer_tcp_connections[address[0]] = connection
                 threading.Thread(target=self.file_transfer.peer_tcp_receiving_loop, args=(connection,)).start()
-                threading.Thread(target=self.file_transfer.peer_udp_receiving_loop).start()
 
     def connect_peer(self, peer_ip: str, peer_tcp_port: int) -> None:
         if self.peer_tcp_connections.get(peer_ip, None) is None:
@@ -65,7 +64,6 @@ class FileConnection:
             connection = tmp_connection
             self.peer_tcp_connections[peer_ip] = connection
             threading.Thread(target=self.file_transfer.peer_tcp_receiving_loop, args=(connection,)).start()
-            threading.Thread(target=self.file_transfer.peer_udp_receiving_loop).start()
 
     def get_peer_tcp_port(self) -> int:
         return self.peer_tcp_socket.getsockname()[1]
@@ -77,9 +75,8 @@ class FileConnection:
         return self.peer_tcp_connections.get(peer_ip, None)
 
     def remove_peer_connection(self, connection: socket.socket) -> None:
-        peer_ip = connection.getpeername()[0]
         if connection is not None:
-            self.peer_tcp_connections.pop(peer_ip)
+            self.peer_tcp_connections.pop(connection.getpeername()[0])
             connection.close()
 
     def close_connection(self) -> None:

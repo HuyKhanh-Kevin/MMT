@@ -49,15 +49,15 @@ class TransferSession:
     file_size: int
     total_chunk: int
     checksum: str
+    state: str
+    pending_chunks: dict[tuple[int, int], PendingChunk] = field(default_factory=dict)
+    condition: threading.Condition = field(default_factory=threading.Condition)
     chunk_buffer: list[FileChunk | None] = field(
         default_factory=lambda: [None] * (BUFFER_SIZE_FOR_EACH_FILE // ProtocolConstants.MAX_CHUNK_DATA_SIZE)
     )
     curr_chunk_order: int = 0
-    def addChunk(self, chunk_index: int, chunk_data: bytes) -> None: 
+    def addChunk(self, chunk_index: int, chunk_data: bytes) -> None:
         self.file_io.write_chunk(chunk_index, self.total_chunk, self.file_size, chunk_data)
-    state: str
-    pending_chunks: dict[tuple[int, int], PendingChunk] = field(default_factory=dict)
-    condition: threading.Condition = field(default_factory=threading.Condition)
 
 class FileTransfer:
     def __init__(self, client: "Client"):
@@ -136,7 +136,15 @@ class FileTransfer:
 
                         threading.Thread(target=self.peer_udp_sending, name="peer-file-sending", daemon=True, args=(header.getSenderID(), response.file_id, response.buffer_size)).start()
 
-                    elif header.getMessageType() == MessageType.FILE_REJECTED: pass
+                    elif header.getMessageType() == MessageType.FILE_REJECTED:
+                        try:
+                            response: FileReject = JsonPayloadCodec.decode(packet.getPayload(), FileReject)
+                        except (ValueError, TypeError): continue
+
+                        transfer_session = self.active_transfer[response.file_id]
+                        transfer_session.file_io.close_source()
+
+                        self.client.listener.display_error(response.error_code, response.error_message)
 
                     elif header.getMessageType() == MessageType.FILE_DONE:
                         try:
@@ -152,7 +160,15 @@ class FileTransfer:
 
                             transfer_session.file_io.close_source()
 
-                    elif header.getMessageType() == MessageType.ERROR_FILE: pass
+                    elif header.getMessageType() == MessageType.ERROR_FILE:
+                        try:
+                            response: ErrorFile = JsonPayloadCodec.decode(packet.getPayload(), ErrorFile)
+                        except (ValueError, TypeError): continue
+
+                        transfer_session = self.active_transfer[response.file_id]
+                        transfer_session.file_io.close_source()
+
+                        self.client.listener.display_error(response.error_code, response.error_message)
 
             except (OSError, EOFError) as error:
                 if self.client.get_running():
@@ -166,7 +182,7 @@ class FileTransfer:
         next_chunk_index: int = 0
 
         while base_chunk_index < session.total_chunk and session.state == "sending" and self.client.get_running():
-            while next_chunk_index < min(base_chunk_index + buffer_size, session.total_chunk):
+            while next_chunk_index < min(base_chunk_index + buffer_size // ProtocolConstants.MAX_CHUNK_DATA_SIZE, session.total_chunk):
                 chunk_data = session.file_io.read_chunk(next_chunk_index, session.total_chunk)
                 file_chunk_packet = self.create_file_chunk_packet(receiver, file_id, next_chunk_index, chunk_data)
 
@@ -192,7 +208,7 @@ class FileTransfer:
                     base_chunk_index += 1
 
                 if base_chunk_index == session.total_chunk: break
-                if next_chunk_index < min(base_chunk_index + buffer_size, session.total_chunk): continue
+                if next_chunk_index < min(base_chunk_index + buffer_size // ProtocolConstants.MAX_CHUNK_DATA_SIZE, session.total_chunk): continue
 
                 earliest_send_time = min(
                     chunk.last_sent_at + RETRY_TIMEOUT
@@ -262,12 +278,13 @@ class FileTransfer:
                         session.chunk_buffer = session.chunk_buffer[flushed_count:] + [None] * flushed_count
                     else:
                         session.chunk_buffer[response.chunk_order - session.curr_chunk_order] = response
-                    
-                    ack = self.create_ack_packet(header.getReceiverID(), header.getStreamID(), header.getSequenceNumber())
+                    print(f"[UDP receiver] {header.senderID} buffer: {[chunk.chunk_order if chunk is not None else None for chunk in session.chunk_buffer]}")
+
+                    ack = self.create_ack_packet(header.getSenderID(), header.getStreamID(), header.getSequenceNumber())
                     UdpPacketIO.sendPacket(self.connection.file_udp_socket, source, ack)
                     
                     if(session.curr_chunk_order == session.total_chunk):
-                        file_done = self.create_file_done_packet(header.receiverID, session.file_id)
+                        file_done = self.create_file_done_packet(header.getSenderID(), session.file_id)
                         PacketIO.writePacket(self.connection.peer_tcp_connections[source[0]], file_done)
 
                 elif header.messageType == MessageType.ACK:

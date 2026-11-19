@@ -1,4 +1,5 @@
 import argparse
+import threading
 
 from client.client_account import Client
 from client.client_console import Console
@@ -16,15 +17,19 @@ def main():
     args = parser.parse_args()
 
     client = None
+    connection = None
 
     try:
         connection = FileConnection()
         client = Client(args.server_ip, args.server_port, args.udp_port, connection.get_peer_tcp_port(), connection.get_file_udp_port())
         transfer = FileTransfer(client)
         transfer.set_file_connection(connection)
+        client.set_file_transfer(transfer)
         console = Console(client)
         client.set_listener(console)
 
+        connection.start_accepting()
+        threading.Thread(target=transfer.peer_udp_receiving_loop).start()
         client.start_receiving()
         console.start_sending()
     except (KeyboardInterrupt, EOFError):
@@ -34,6 +39,8 @@ def main():
     finally:
         if client is not None:
             client.close_connection()
+        if connection is not None:
+            connection.close_connection()
 
 if __name__ == '__main__':
     main()

@@ -1,12 +1,14 @@
 import socket
 import threading
-
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from file_transmission.file_transfer import FileTransfer
 
 class FileConnection:
     def __init__(self):
         peer_tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         file_udp_socket = None
-
+        self.file_transfer = None
         try:
             peer_tcp_socket.bind(("0.0.0.0", 0))
             peer_tcp_socket.listen(10)
@@ -30,6 +32,9 @@ class FileConnection:
 
         self.peer_tcp_connections: dict[str, socket.socket] = {}
 
+    def set_file_transfer(self, file_transfer : "FileTransfer"):
+        self.file_transfer = file_transfer
+
     def start_accepting(self) -> None:
         threading.Thread(target=self.peer_accept, name="peer-listener", daemon=True).start()
 
@@ -46,6 +51,8 @@ class FileConnection:
 
             if self.peer_tcp_connections.get(address[0]) is None:
                 self.peer_tcp_connections[address[0]] = connection
+                threading.Thread(target=self.file_transfer.peer_tcp_receiving_loop, args=(connection,)).start()
+                threading.Thread(target=self.file_transfer.peer_udp_receiving_loop).start()
 
     def connect_peer(self, peer_ip: str, peer_tcp_port: int) -> None:
         if self.peer_tcp_connections.get(peer_ip, None) is None:
@@ -57,6 +64,8 @@ class FileConnection:
                 raise
             connection = tmp_connection
             self.peer_tcp_connections[peer_ip] = connection
+            threading.Thread(target=self.file_transfer.peer_tcp_receiving_loop, args=(connection,)).start()
+            threading.Thread(target=self.file_transfer.peer_udp_receiving_loop).start()
 
     def get_peer_tcp_port(self) -> int:
         return self.peer_tcp_socket.getsockname()[1]

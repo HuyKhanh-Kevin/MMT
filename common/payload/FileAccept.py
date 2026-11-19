@@ -5,6 +5,7 @@ from common.payload.FileID import validate_file_id
 @dataclass(frozen=True)
 class FileAccept:
     file_id: str
+    buffer_size: int
     def __post_init__(self):
         validate_file_id(self.file_id)
         if not isinstance(self.file_id, str):

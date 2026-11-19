@@ -69,7 +69,7 @@ class FileIO:
                 self.source.close()
                 self.source = None
 
-    def open_destination(self, file_path: str) -> None:
+    def open_destination(self, file_path: str | Path) -> None:
         with self.lock:
             if self.destination is not None:
                 raise RuntimeError("File is already open")

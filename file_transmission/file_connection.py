@@ -44,7 +44,8 @@ class FileConnection:
                     break
                 raise
 
-            self.peer_tcp_connections[address[0]] = connection
+            if self.peer_tcp_connections.get(address[0]) is None:
+                self.peer_tcp_connections[address[0]] = connection
 
     def connect_peer(self, peer_ip: str, peer_tcp_port: int) -> None:
         if self.peer_tcp_connections.get(peer_ip, None) is None:
@@ -66,11 +67,11 @@ class FileConnection:
     def get_peer_tcp_connection(self, peer_ip: str) -> socket.socket | None:
         return self.peer_tcp_connections.get(peer_ip, None)
 
-    def remove_peer_connection(self, peer_ip: str) -> None:
-        connection = self.peer_tcp_connections.get(peer_ip)
+    def remove_peer_connection(self, connection: socket.socket) -> None:
+        peer_ip = connection.getpeername()[0]
         if connection is not None:
-            connection.close()
             self.peer_tcp_connections.pop(peer_ip)
+            connection.close()
 
     def close_connection(self) -> None:
         self.stop_event.set()

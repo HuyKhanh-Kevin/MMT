@@ -1,4 +1,4 @@
-package server;
+package test.java.server;
 
 import client.AccountClient;
 import common.*;

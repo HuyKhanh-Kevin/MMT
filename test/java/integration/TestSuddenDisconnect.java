@@ -1,4 +1,4 @@
-package integration;
+package test.java.integration;
 
 import common.Packet;
 import common.PacketHeader;

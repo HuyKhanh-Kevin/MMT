@@ -95,7 +95,11 @@ def resolve_routing_policy(hostname, routes):
     """
 
     print(hostname)
-    proxy_map, policy = routes.get(hostname,('127.0.0.1:9000','round-robin'))
+    if hostname not in routes:
+        print("[Proxy] Unmapped hostname: {}".format(hostname))
+        return '', ''
+
+    proxy_map, policy = routes[hostname]
     print(proxy_map)
     print(policy)
 
@@ -208,6 +212,7 @@ def run_proxy(ip, port, routes):
     """
 
     proxy = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    proxy.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
     try:
         proxy.bind((ip, port))

@@ -11,9 +11,11 @@ class LoginResponse:
     reason: Optional[str] = None
 
     def __post_init__(self):
-        if self.status not in ("success", "failed"):
+        # Validate status
+        if type(self.status) is not str or self.status not in ("success", "failed"):
             raise ValueError("Invalid login status")
 
+        # Validate field types
         if self.session_id is not None and not isinstance(self.session_id, str):
             raise TypeError("session_id must be a string")
 
@@ -22,6 +24,25 @@ class LoginResponse:
 
         if self.reason is not None and not isinstance(self.reason, str):
             raise TypeError("reason must be a string")
+
+        # Validate successful login
+        if self.status == "success":
+            if not self.session_id or not self.session_id.strip():
+                raise ValueError("Successful login requires a valid session_id")
+
+            if self.user_id is None or not (1 <= self.user_id <= 0xFFFFFFFF):
+                raise ValueError("Successful login requires a valid user_id")
+
+            if self.reason is not None:
+                raise ValueError("Successful login must not have a reason")
+
+        # Validate failed login
+        else:
+            if self.session_id is not None or self.user_id is not None:
+                raise ValueError("Failed login must not contain session_id or user_id")
+
+            if not self.reason or not self.reason.strip():
+                raise ValueError("Failed login requires a reason")
 
     @classmethod
     def from_result(
@@ -46,8 +67,4 @@ class LoginResponse:
         return self.status == "success"
 
     def to_dict(self) -> dict:
-        return {
-            key: value
-            for key, value in asdict(self).items()
-            if value is not None
-        }
+        return asdict(self)

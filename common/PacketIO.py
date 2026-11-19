@@ -2,7 +2,7 @@
 import socket
 import struct
 
-from common import Packet
+from common.Packet import Packet
 from common import PacketCodec
 from common import ProtocolConstants
 

@@ -1,78 +1,66 @@
+"""FILE_CHUNK wire format: UUID(16) | chunk_order(4) | data_length(4) | data.
+
+All integer fields use network byte order (big-endian). The outer 24-byte
+PacketHeader is NOT included here; PacketCodec handles that separately.
+"""
 
 import struct
+import uuid
 
-from .protocol_constants import ProtocolConstants
-from .payload.file_chunk import FileChunk
+from .ProtocolConstants import ProtocolConstants
+from .payload.FileChunk import FileChunk
 
 
 class FileChunkCodec:
-    FORMAT = ">III"  # Big-Endian, 3 unsigned integers (12 bytes)
+    _FORMAT = ">16sII"
+    _METADATA_SIZE = struct.calcsize(_FORMAT)
 
     @staticmethod
     def encode(chunk: FileChunk) -> bytes:
-        if chunk is None:
-            raise ValueError("FileChunk must not be null")
+        if not isinstance(chunk, FileChunk):
+            raise TypeError("chunk must be a FileChunk")
+        if FileChunkCodec._METADATA_SIZE != ProtocolConstants.CHUNK_METADATA_SIZE:
+            raise ValueError("CHUNK_METADATA_SIZE does not match the codec")
 
-        file_id = chunk.getFileID()
-        chunk_index = chunk.getChunkOrder()
-        data = chunk.getPayloadData()
-
-        if not isinstance(file_id, int) or not 0 <= file_id <= 0x7FFFFFFF:
-            raise ValueError("Invalid file ID")
-
-        if not isinstance(chunk_index, int) or not 0 <= chunk_index <= 0x7FFFFFFF:
-            raise ValueError("Invalid chunk index")
-
-        if not isinstance(data, bytes):
-            raise TypeError("Chunk data must be bytes")
-
+        data = chunk.payload_data
         if len(data) > ProtocolConstants.MAX_CHUNK_DATA_SIZE:
-            raise ValueError("Chunk data is too large")
-
+            raise ValueError("Chunk payload exceeds maximum size")
+        # Validation of UUID and chunk order happens in FileChunk.__post_init__.
+        file_id_bytes = uuid.UUID(chunk.file_id).bytes
         metadata = struct.pack(
-            FileChunkCodec.FORMAT,
-            file_id,
-            chunk_index,
-            len(data)
+            FileChunkCodec._FORMAT,
+            file_id_bytes,
+            chunk.chunk_order,
+            len(data),
         )
-
         return metadata + data
 
     @staticmethod
-    def decode(data: bytes) -> FileChunk:
-        if data is None:
-            raise ValueError("Chunk bytes must not be null")
+    def decode(raw: bytes) -> FileChunk:
+        if not isinstance(raw, (bytes, bytearray)):
+            raise TypeError("raw must be bytes or bytearray")
+        if FileChunkCodec._METADATA_SIZE != ProtocolConstants.CHUNK_METADATA_SIZE:
+            raise ValueError("CHUNK_METADATA_SIZE does not match the codec")
 
-        if not isinstance(data, bytes):
-            raise TypeError("Chunk must be bytes")
-
+        raw = bytes(raw)
         metadata_size = ProtocolConstants.CHUNK_METADATA_SIZE
-
-        if len(data) < metadata_size:
+        if len(raw) < metadata_size:
             raise ValueError("Incomplete chunk metadata")
-
-        if len(data) > (
-            metadata_size + ProtocolConstants.MAX_CHUNK_DATA_SIZE
-        ):
+        if len(raw) > metadata_size + ProtocolConstants.MAX_CHUNK_DATA_SIZE:
             raise ValueError("Chunk is too large")
 
-        file_id, chunk_index, payload_length = struct.unpack(
-            FileChunkCodec.FORMAT,
-            data[:metadata_size]
+        file_id_bytes, chunk_order, payload_length = struct.unpack(
+            FileChunkCodec._FORMAT, raw[:metadata_size]
         )
+        data = raw[metadata_size:]
+        if chunk_order > 0x7FFFFFFF:
+            raise ValueError("Invalid chunk order")
+        if payload_length > ProtocolConstants.MAX_CHUNK_DATA_SIZE:
+            raise ValueError("Chunk payload exceeds maximum size")
+        if payload_length != len(data):
+            raise ValueError("Payload length does not match the data")
 
-        payload = data[metadata_size:]
-
-        if file_id > 0x7FFFFFFF:
-            raise ValueError("Invalid file ID")
-
-        if chunk_index > 0x7FFFFFFF:
-            raise ValueError("Invalid chunk index")
-
-        if (
-            payload_length > ProtocolConstants.MAX_CHUNK_DATA_SIZE
-            or payload_length != len(payload)
-        ):
-            raise ValueError("Invalid chunk payload length")
-
-        return FileChunk(file_id, chunk_index, payload)
+        identifier = uuid.UUID(bytes=file_id_bytes)
+        if identifier.version != 4:
+            raise ValueError("file_id in chunk is not a UUIDv4")
+        return FileChunk(str(identifier), chunk_order, data)

@@ -11,8 +11,6 @@ class PacketIO:
 
     @staticmethod
     def read_exact(sock: socket.socket, n: int) -> bytes:
-        """Read exactly n bytes unless connection closes."""
-
         data = bytearray()
 
         while len(data) < n:
@@ -37,7 +35,6 @@ class PacketIO:
     ) -> None:
         data = PacketCodec.encode(packet)
 
-        # sendall ensures all bytes are submitted to TCP
         sock.sendall(data)
 
     @staticmethod
@@ -45,7 +42,6 @@ class PacketIO:
         sock: socket.socket
     ) -> Packet | None:
 
-        # 1. Read full header
         header_size = ProtocolConstants.HEADER_SIZE
 
         try:
@@ -58,7 +54,6 @@ class PacketIO:
         if len(header) == 0:
             return None
 
-        # 2. Read payload length at offset 20
         payload_length = struct.unpack_from(
             "!I", header, 20
         )[0]
@@ -69,7 +64,6 @@ class PacketIO:
         ):
             raise OSError("Invalid payload length")
 
-        # 3. Read exact payload
         try:
             payload = PacketIO.read_exact(
                 sock, payload_length
@@ -84,7 +78,6 @@ class PacketIO:
                 "Connection closed during payload"
             )
 
-        # 4. Decode packet
         try:
             return PacketCodec.decode(header + payload)
         except (ValueError, TypeError) as e:

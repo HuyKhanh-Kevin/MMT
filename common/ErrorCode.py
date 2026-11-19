@@ -16,8 +16,6 @@ class ErrorCode:
             code, cls(-1, "Unknown error")
         )
 
-
-# Define error codes AFTER the class definition
 ErrorCode.error_codes = {
     0: ErrorCode(0, "Success"),
     1001: ErrorCode(1001, "Invalid credentials"),

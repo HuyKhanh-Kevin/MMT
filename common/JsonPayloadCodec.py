@@ -41,7 +41,6 @@ def to_json_value(value):
         }
 
     elif isinstance(value, dict):
-        # Dictionary keys are preserved.
         return {
             k: to_json_value(v)
             for k, v in value.items()
@@ -70,8 +69,6 @@ def to_json_value(value):
 
 
 def validate_type(value, expected, allow_null=False):
-    """Validate types without implicit scalar conversion."""
-
     if value is None:
         origin = get_origin(expected)
         args = get_args(expected)
@@ -160,8 +157,6 @@ def validate_type(value, expected, allow_null=False):
 
 
 def construct_object(data, target_type, allow_null=False):
-    """Construct DTO and reject missing/unknown fields."""
-
     if target_type is dict:
         return data
 
@@ -215,7 +210,6 @@ def construct_object(data, target_type, allow_null=False):
 
 
 class JsonPayloadCodec:
-
     @staticmethod
     def checkSize(payload: bytes) -> None:
         if (
@@ -257,10 +251,8 @@ class JsonPayloadCodec:
 
         JsonPayloadCodec.checkSize(payload)
 
-        # Reject malformed UTF-8
         text = payload.decode("utf-8", errors="strict")
 
-        # Reject duplicates, trailing tokens and NaN/Infinity
         data = json.loads(
             text,
             object_pairs_hook=reject_duplicates,

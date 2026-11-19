@@ -10,12 +10,6 @@ class ErrorPayload:
     related_sequence_number: int = 0
 
     def __post_init__(self):
-        if type(self.error_code) is not int:
-            raise TypeError("error_code must be an integer")
-
-        if not isinstance(self.error_message, str):
-            raise TypeError("error_message must be a string")
-
         if type(self.related_stream_id) is not int:
             raise TypeError("related_stream_id must be an integer")
 

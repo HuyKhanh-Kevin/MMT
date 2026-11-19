@@ -1,4 +1,3 @@
-"""Binary FILE_CHUNK payload model with canonical UUIDv4 string file IDs."""
 
 from dataclasses import dataclass
 from common.ProtocolConstants import ProtocolConstants

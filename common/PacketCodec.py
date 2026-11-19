@@ -1,6 +1,4 @@
-
 import struct
-
 from .Packet import Packet
 from .PacketHeader import PacketHeader
 from .ProtocolConstants import ProtocolConstants
@@ -11,7 +9,6 @@ class PacketCodec:
 
     @staticmethod
     def _get_field(header, *method_names):
-        # Supports getStreamId/getStreamID naming differences.
         for name in method_names:
             method = getattr(header, name, None)
             if callable(method):
@@ -151,8 +148,6 @@ class PacketCodec:
             raise ValueError("Payload length mismatch")
 
         payload = data[ProtocolConstants.HEADER_SIZE:]
-
-        # Constructor order differs from wire order.
         header = PacketHeader(
             version,
             message_type,

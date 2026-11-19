@@ -8,6 +8,6 @@ class ProtocolConstants:
     MAX_TEXT_SIZE = 1000
 
     MAX_CHUNK_DATA_SIZE = 1024
-    CHUNK_METADATA_SIZE = 24  # UUID (16) + chunk order (4) + payload length (4)
+    CHUNK_METADATA_SIZE = 24
 
     MAX_PACKET_SIZE = 1200

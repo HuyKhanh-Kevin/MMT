@@ -17,8 +17,6 @@ class PacketHeader:
 
     SIZE: ClassVar[int] = 24
 
-    # Big-Endian:
-    # B = 1 byte, H = 2 bytes, I = 4 bytes
     FORMAT: ClassVar[str] = "!BBHIIIII"
 
     def __post_init__(self):
@@ -34,8 +32,6 @@ class PacketHeader:
         }
 
         for name, (value, bits) in fields.items():
-            # bool is an int subclass in Python, but it is not a valid
-            # protocol field value.
             if type(value) is not int or not 0 <= value < (1 << bits):
                 raise ValueError(f"Invalid {name}: {value}")
 

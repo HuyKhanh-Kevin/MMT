@@ -34,5 +34,4 @@ class LoginRequest:
         return self.file_udp_port
 
     def get_udp_port(self) -> int:
-        """Backward-compatible alias for the file transfer UDP port."""
         return self.file_udp_port

@@ -31,7 +31,6 @@ class UdpPacketIO:
         sock: socket.socket
     ) -> ReceivedPacket:
 
-        # Add 1 byte to detect oversized UDP packets
         buffer_size = ProtocolConstants.MAX_PACKET_SIZE + 1
 
         data, source = sock.recvfrom(buffer_size)

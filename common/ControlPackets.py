@@ -25,8 +25,8 @@ class ControlPackets:
         header = PacketHeader(
             ProtocolConstants.PROTOCOL_VERSION,
             message_type,
-            0,               # flags
-            0,               # streamID (control stream)
+            0,
+            0,
             sequence,
             len(payload),
             sender,

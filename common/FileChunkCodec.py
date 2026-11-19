@@ -1,9 +1,3 @@
-"""FILE_CHUNK wire format: UUID(16) | chunk_order(4) | data_length(4) | data.
-
-All integer fields use network byte order (big-endian). The outer 24-byte
-PacketHeader is NOT included here; PacketCodec handles that separately.
-"""
-
 import struct
 import uuid
 
@@ -25,7 +19,6 @@ class FileChunkCodec:
         data = chunk.payload_data
         if len(data) > ProtocolConstants.MAX_CHUNK_DATA_SIZE:
             raise ValueError("Chunk payload exceeds maximum size")
-        # Validation of UUID and chunk order happens in FileChunk.__post_init__.
         file_id_bytes = uuid.UUID(chunk.file_id).bytes
         metadata = struct.pack(
             FileChunkCodec._FORMAT,

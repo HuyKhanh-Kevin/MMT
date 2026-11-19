@@ -49,15 +49,15 @@ class TransferSession:
     file_size: int
     total_chunk: int
     checksum: str
+    state: str
+    pending_chunks: dict[tuple[int, int], PendingChunk] = field(default_factory=dict)
+    condition: threading.Condition = field(default_factory=threading.Condition)
     chunk_buffer: list[FileChunk | None] = field(
         default_factory=lambda: [None] * (BUFFER_SIZE_FOR_EACH_FILE // ProtocolConstants.MAX_CHUNK_DATA_SIZE)
     )
     curr_chunk_order: int = 0
-    def addChunk(self, chunk_index: int, chunk_data: bytes) -> None: 
+    def addChunk(self, chunk_index: int, chunk_data: bytes) -> None:
         self.file_io.write_chunk(chunk_index, self.total_chunk, self.file_size, chunk_data)
-    state: str
-    pending_chunks: dict[tuple[int, int], PendingChunk] = field(default_factory=dict)
-    condition: threading.Condition = field(default_factory=threading.Condition)
 
 class FileTransfer:
     def __init__(self, client: "Client"):

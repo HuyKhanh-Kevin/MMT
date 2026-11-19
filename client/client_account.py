@@ -18,6 +18,7 @@ from common.payload.LogoutResponse import LogoutResponse
 from common.payload.SignupRequest import SignupRequest
 from common.payload.SignupResponse import SignupResponse
 from common.payload.UserListRequest import UserListRequest
+from common.payload.UserListResponse import UserListResponse
 from file_transmission.file_transfer import FileTransfer
 
 
@@ -25,7 +26,9 @@ class Client:
     def __init__(self, server_ip, server_port, udp_port, peer_tcp_port, file_udp_port):
         self.id = 0
         self.session_id = None
-
+        self.user_list_users = []
+        self.user_list_seen_cursors = set()
+        self.user_list_pending = False
         tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         udp_socket = None
 
@@ -182,7 +185,39 @@ class Client:
 
                 if packet is None or source != self.server_udp_address:
                     continue
+                header = packet.getHeader()
 
+                if header.getMessageType() == MessageType.USER_LIST_RESPONSE:
+                    try:
+                        response = JsonPayloadCodec.decode(
+                            packet.getPayload(),
+                            UserListResponse
+                        )
+                    except (ValueError, TypeError, UnicodeError) as error:
+                        print(f"Invalid user list response: {error}")
+                        continue
+
+                    if not self.user_list_pending:
+                        continue
+
+                    self.user_list_users.extend(response.users)
+
+                    cursor = response.next_cursor
+
+                    if cursor is not None:
+                        if cursor in self.user_list_seen_cursors:
+                            print("Repeated cursor detected")
+                            self.user_list_pending = False
+                            continue
+
+                        self.user_list_seen_cursors.add(cursor)
+
+                        next_packet = self.create_user_list_packet(cursor)
+                        self.send_udp_packet(next_packet)
+
+                    else:
+                        self.user_list_pending = False
+                        self.listener.display_user_list(self.user_list_users)
             except socket.timeout:
                 continue
             except OSError as error:
@@ -289,6 +324,20 @@ class Client:
             raise
         header = PacketHeader(int(ProtocolConstants.PROTOCOL_VERSION), MessageType.HEARTBEAT, 0, self.get_outgoing_stream(0), self.next_udp_sequence(), len(payload), self.id, 0)
         return Packet(header, payload)
+
+    def request_user_list(self):
+        if not self.authenticated:
+            raise RuntimeError("Login required")
+
+        if self.user_list_pending:
+            return
+
+        self.user_list_users = []
+        self.user_list_seen_cursors = set()
+        self.user_list_pending = True
+
+        packet = self.create_user_list_packet()
+        self.send_udp_packet(packet)
 
     def exit_program(self):
         if self.running:

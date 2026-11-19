@@ -1,5 +1,5 @@
 import threading
-from common.PacketIO import read_packet, write_packet
+from common.PacketIO import PacketIO
 
 class ClientSession:
     def __init__(self, sock, addr):
@@ -13,7 +13,7 @@ class ClientSession:
         """Đồng bộ việc ghi packet khi nhiều luồng cùng gửi tới một client"""
         with self.lock:
             if self.sock and not self.sock._closed:
-                write_packet(self.sock, packet)
+                PacketIO.writePacket(self.sock, packet)
 
 class SessionManager:
     def __init__(self):

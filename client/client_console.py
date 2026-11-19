@@ -25,8 +25,7 @@ class Console(Listener):
             if not self.client.get_running(): break
             if self.client.get_authenticated():
                 if command == "1":
-                    packet = self.client.create_user_list_packet()
-                    self.client.send_udp_packet(packet)
+                    self.client.request_user_list()
                 elif command == "2":
                     receiver = int(input("Enter receiver ID: "))
                     message = input("Enter message: ")

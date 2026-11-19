@@ -1,4 +1,4 @@
-from common.PacketIO import read_packet
+from common.PacketIO import PacketIO
 from common.MessageType import MessageType
 
 class ClientHandler:
@@ -11,7 +11,7 @@ class ClientHandler:
         try:
             while True:
                 # Đọc packet sử dụng PacketIO của Khánh
-                packet = read_packet(sock)
+                packet = PacketIO.readPacket(sock)
                 if packet is None:
                     break
 

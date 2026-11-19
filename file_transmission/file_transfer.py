@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from client.client_account import Client
 
+BUFFER_SIZE_FOR_EACH_FILE = 3 * 1024 # Đơn vị Byte
 MAX_RETRIES = 10
 RETRY_TIMEOUT = 10
 
@@ -48,6 +49,12 @@ class TransferSession:
     file_size: int
     total_chunk: int
     checksum: str
+    chunk_buffer: list[FileChunk | None] = field(
+        default_factory=lambda: [None] * (BUFFER_SIZE_FOR_EACH_FILE // ProtocolConstants.MAX_CHUNK_DATA_SIZE)
+    )
+    curr_chunk_order: int = 0
+    def addChunk(self, chunk_index: int, chunk_data: bytes) -> None: 
+        self.file_io.write_chunk(chunk_index, self.total_chunk, self.file_size, chunk_data)
     state: str
     pending_chunks: dict[tuple[int, int], PendingChunk] = field(default_factory=dict)
     condition: threading.Condition = field(default_factory=threading.Condition)
@@ -65,6 +72,7 @@ class FileTransfer:
 
     def set_file_connection(self, connection: FileConnection):
         self.connection = connection
+        self.connection.set_file_transfer(self)
 
     def peer_tcp_sending(self, peer_ip: str, peer_tcp_port: int, packet: Packet) -> None:
         with self.lock:
@@ -108,8 +116,9 @@ class FileTransfer:
                                 self.active_transfer[response.file_id] = TransferSession(response.file_id, header.getSenderID(), (connection.getpeername()[0], response.sender_udp_port), file_io, response.file_size, response.total_chunks, response.checksum, "acceptance-pending")
 
                                 try:
-                                    file_accept_packet = self.create_file_accept_packet(header.getSenderID(), response.file_id)
-                                    PacketIO.writePacket(connection, file_accept_packet)
+                                    buffer_size = BUFFER_SIZE_FOR_EACH_FILE 
+                                    file_acp = self.create_file_accept_packet(header.getSenderID(), response.file_id, buffer_size)
+                                    PacketIO.writePacket(connection, file_acp)
                                 except Exception:
                                     file_io.close_destination()
                                     self.active_transfer.pop(response.file_id)
@@ -229,18 +238,42 @@ class FileTransfer:
         while self.client.get_running():
             try:
                 received_packet = UdpPacketIO.receivePacket(self.connection.file_udp_socket)
+                if received_packet is None: continue
+
                 packet = received_packet.packet
                 source = received_packet.source
 
-                if received_packet is None: continue
-
                 header = packet.getHeader()
-                if header.getMessageType() == MessageType.FILE_CHUNK:
+                if header.messageType == MessageType.FILE_CHUNK:
                     response: FileChunk = FileChunkCodec.decode(packet.getPayload())
-                    if self.active_transfer[response.file_id] != source: continue
+                    session: TransferSession = self.active_transfer[response.file_id]
+                    if session.peer_udp_address != source: continue
+                    
+                    if response.chunk_order == session.curr_chunk_order:
+                        session.chunk_buffer[0] = response
+                        flushed_count = 0
+                        for chunk in session.chunk_buffer:
+                            if chunk is not None:
+                                session.addChunk(chunk.chunk_order, chunk.payload_data)
+                                session.curr_chunk_order += 1
+                                flushed_count += 1
+                            else:
+                                break 
+                        session.chunk_buffer = session.chunk_buffer[flushed_count:] + [None] * flushed_count
+                    else:
+                        session.chunk_buffer[response.chunk_order - session.curr_chunk_order] = response
+                    
+                    ack = self.create_ack_packet(header.getReceiverID(), header.getStreamID(), header.getSequenceNumber())
+                    UdpPacketIO.sendPacket(self.connection.file_udp_socket, source, ack)
+                    
+                    if(session.curr_chunk_order == session.total_chunk):
+                        file_done = self.create_file_done_packet(header.receiverID, session.file_id)
+                        PacketIO.writePacket(self.connection.peer_tcp_connections[source[0]], file_done)
 
-                elif header.getMessageType() == MessageType.ACK:
+                elif header.messageType == MessageType.ACK:
                     response: ACK = JsonPayloadCodec.decode(packet.getPayload(), ACK)
+                    # NOTE: Để tạm để test
+                    print(f"[UDP receiver] {header.senderID} sent ACK: {response.ack_seq_num}")
 
                     key = (response.get_ack_stream_id(), response.get_ack_seq_num())
                     for session in self.active_transfer.values():

@@ -3,6 +3,7 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path
 
+from common.ErrorCode import ErrorCode
 from common.FileChunkCodec import FileChunkCodec
 from common.JsonPayloadCodec import JsonPayloadCodec
 from common.MessageType import MessageType
@@ -67,19 +68,37 @@ class FileTransfer:
 
                     header = packet.getHeader()
                     if header.getMessageType() == MessageType.FILE_REQUEST:
-                        response: FileReq = JsonPayloadCodec.decode(packet.getPayload(), FileReq)
+                        try:
+                            response: FileReq = JsonPayloadCodec.decode(packet.getPayload(), FileReq)
+                        except (ValueError, TypeError): continue
 
-                        file_io = FileIO()
-                        file_io.open_destination(self.destination_path / response.file_name)
-                        file_io.file_name = response.file_name
-                        file_io.file_size = response.file_size
-                        file_io.file_checksum = response.checksum
-
-                        self.active_transfer[response.file_id] = TransferSession(response.file_id, header.getSenderID(), (connection.getpeername()[0], response.sender_udp_port), file_io, response.file_size, response.total_chunks, response.checksum)
-
-                        file_acp = self.create_file_accept_packet(header.getSenderID(), response.file_id)
                         with self.lock:
-                            PacketIO.writePacket(connection, file_acp)
+                            if response.file_id in self.active_transfer:
+                                file_reject = self.create_file_reject_packet(header.getSenderID(), response.file_id, ErrorCode(1003, "Invalid payload"))
+                                PacketIO.writePacket(connection, file_reject)
+                            else:
+                                file_io = FileIO()
+
+                                try:
+                                    file_io.open_destination(self.destination_path / response.file_name)
+                                except OSError:
+                                    file_reject = self.create_file_reject_packet(header.getSenderID(), response.file_id, ErrorCode(1003, "Invalid payload"))
+                                    PacketIO.writePacket(connection, file_reject)
+                                    continue
+
+                                file_io.file_name = response.file_name
+                                file_io.file_size = response.file_size
+                                file_io.file_checksum = response.checksum
+
+                                self.active_transfer[response.file_id] = TransferSession(response.file_id, header.getSenderID(), (connection.getpeername()[0], response.sender_udp_port), file_io, response.file_size, response.total_chunks, response.checksum)
+
+                                try:
+                                    file_acp = self.create_file_accept_packet(header.getSenderID(), response.file_id)
+                                    PacketIO.writePacket(connection, file_acp)
+                                except Exception:
+                                    file_io.close_destination()
+                                    self.active_transfer.pop(response.file_id)
+                                    raise
 
                     elif header.getMessageType() == MessageType.FILE_ACCEPTED: pass
                     elif header.getMessageType() == MessageType.FILE_REJECTED: pass
@@ -155,8 +174,8 @@ class FileTransfer:
                               self.client.id, receiver)
         return Packet(header, payload)
 
-    def create_file_reject_packet(self, receiver: int, file_id: str, code: int, message: str) -> Packet:
-        file_reject = FileReject(file_id, code, message)
+    def create_file_reject_packet(self, receiver: int, file_id: str, error: ErrorCode) -> Packet:
+        file_reject = FileReject(file_id, error.code, error.message)
         payload = JsonPayloadCodec.encode(file_reject)
         header = PacketHeader(int(ProtocolConstants.PROTOCOL_VERSION), MessageType.FILE_REJECTED, 0,
                               self.client.get_outgoing_stream(receiver), self.client.next_tcp_sequence(), len(payload),

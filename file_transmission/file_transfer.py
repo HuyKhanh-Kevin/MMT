@@ -1,6 +1,7 @@
 import socket
 import threading
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from common.ErrorCode import ErrorCode
@@ -27,6 +28,17 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from client.client_account import Client
 
+MAX_RETRIES = 10
+RETRY_TIMEOUT = 10
+
+@dataclass
+class PendingChunk:
+    chunk_index: int
+    packet: Packet
+    last_sent_at: float
+    retries: int = 0
+    acked: bool = False
+
 @dataclass
 class TransferSession:
     file_id: str
@@ -36,6 +48,9 @@ class TransferSession:
     file_size: int
     total_chunk: int
     checksum: str
+    state: str
+    pending_chunks: dict[tuple[int, int], PendingChunk] = field(default_factory=dict)
+    condition: threading.Condition = field(default_factory=threading.Condition)
 
 class FileTransfer:
     def __init__(self, client: "Client"):
@@ -74,35 +89,60 @@ class FileTransfer:
 
                         with self.lock:
                             if response.file_id in self.active_transfer:
-                                file_reject = self.create_file_reject_packet(header.getSenderID(), response.file_id, ErrorCode(1003, "Invalid payload"))
-                                PacketIO.writePacket(connection, file_reject)
+                                file_reject_packet = self.create_file_reject_packet(header.getSenderID(), response.file_id, ErrorCode(1003, "Invalid payload"))
+                                PacketIO.writePacket(connection, file_reject_packet)
                             else:
                                 file_io = FileIO()
 
                                 try:
                                     file_io.open_destination(self.destination_path / response.file_name)
                                 except OSError:
-                                    file_reject = self.create_file_reject_packet(header.getSenderID(), response.file_id, ErrorCode(1003, "Invalid payload"))
-                                    PacketIO.writePacket(connection, file_reject)
+                                    file_reject_packet = self.create_file_reject_packet(header.getSenderID(), response.file_id, ErrorCode(1003, "Invalid payload"))
+                                    PacketIO.writePacket(connection, file_reject_packet)
                                     continue
 
                                 file_io.file_name = response.file_name
                                 file_io.file_size = response.file_size
                                 file_io.file_checksum = response.checksum
 
-                                self.active_transfer[response.file_id] = TransferSession(response.file_id, header.getSenderID(), (connection.getpeername()[0], response.sender_udp_port), file_io, response.file_size, response.total_chunks, response.checksum)
+                                self.active_transfer[response.file_id] = TransferSession(response.file_id, header.getSenderID(), (connection.getpeername()[0], response.sender_udp_port), file_io, response.file_size, response.total_chunks, response.checksum, "acceptance-pending")
 
                                 try:
-                                    file_acp = self.create_file_accept_packet(header.getSenderID(), response.file_id)
-                                    PacketIO.writePacket(connection, file_acp)
+                                    file_accept_packet = self.create_file_accept_packet(header.getSenderID(), response.file_id)
+                                    PacketIO.writePacket(connection, file_accept_packet)
                                 except Exception:
                                     file_io.close_destination()
                                     self.active_transfer.pop(response.file_id)
                                     raise
 
-                    elif header.getMessageType() == MessageType.FILE_ACCEPTED: pass
+                                self.active_transfer[response.file_id].state = "sending"
+
+                    elif header.getMessageType() == MessageType.FILE_ACCEPTED:
+                        try:
+                            response: FileAccept = JsonPayloadCodec.decode(packet.getPayload(), FileAccept)
+                        except (ValueError, TypeError): continue
+
+                        transfer_session = self.active_transfer[response.file_id]
+                        transfer_session.state = "sending"
+
+                        threading.Thread(target=self.peer_udp_sending, name="peer-file-sending", daemon=True, args=(header.getSenderID(), response.file_id, response.buffer_size)).start()
+
                     elif header.getMessageType() == MessageType.FILE_REJECTED: pass
-                    elif header.getMessageType() == MessageType.FILE_DONE: pass
+
+                    elif header.getMessageType() == MessageType.FILE_DONE:
+                        try:
+                            response: FileDone = JsonPayloadCodec.decode(packet.getPayload(), FileDone)
+                        except (ValueError, TypeError): continue
+
+                        transfer_session = self.active_transfer[response.file_id]
+
+                        if transfer_session.peer_id == header.getSenderID():
+                            with transfer_session.condition:
+                                transfer_session.state = "sending done"
+                                transfer_session.condition.notify_all()
+
+                            transfer_session.file_io.close_source()
+
                     elif header.getMessageType() == MessageType.ERROR_FILE: pass
 
             except (OSError, EOFError) as error:
@@ -111,8 +151,79 @@ class FileTransfer:
             finally:
                 self.connection.remove_peer_connection(connection)
 
-    def peer_udp_sending(self, peer_ip: str, peer_udp_port: int, packet: Packet) -> None:
-        UdpPacketIO.sendPacket(self.connection.file_udp_socket, (peer_ip, peer_udp_port), packet)
+    def peer_udp_sending(self, receiver: int, file_id: str, buffer_size: int) -> None:
+        session = self.active_transfer[file_id]
+        base_chunk_index: int = 0
+        next_chunk_index: int = 0
+
+        while base_chunk_index < session.total_chunk and session.state == "sending" and self.client.get_running():
+            while next_chunk_index < min(base_chunk_index + buffer_size, session.total_chunk):
+                chunk_data = session.file_io.read_chunk(next_chunk_index, session.total_chunk)
+                file_chunk_packet = self.create_file_chunk_packet(receiver, file_id, next_chunk_index, chunk_data)
+
+                with session.condition:
+                    session.pending_chunks[(file_chunk_packet.getHeader().getStreamID(), file_chunk_packet.getHeader().getSequenceNumber())] = PendingChunk(next_chunk_index, file_chunk_packet, time.monotonic())
+
+                UdpPacketIO.sendPacket(self.connection.file_udp_socket, session.peer_udp_address, file_chunk_packet)
+
+                next_chunk_index += 1
+
+            with session.condition:
+                while True:
+                    base_key = next((
+                        key
+                        for key, pending_chunk in session.pending_chunks.items()
+                        if pending_chunk.chunk_index == base_chunk_index
+                    ), None)
+
+                    if base_key is None or not session.pending_chunks[base_key].acked:
+                        break
+
+                    session.pending_chunks.pop(base_key)
+                    base_chunk_index += 1
+
+                if base_chunk_index == session.total_chunk: break
+                if next_chunk_index < min(base_chunk_index + buffer_size, session.total_chunk): continue
+
+                earliest_send_time = min(
+                    chunk.last_sent_at + RETRY_TIMEOUT
+                    for chunk in session.pending_chunks.values()
+                    if not chunk.acked
+                )
+
+                remaining_wait_time = earliest_send_time - time.monotonic()
+
+                if remaining_wait_time > 0:
+                    session.condition.wait(timeout=remaining_wait_time)
+
+                while True:
+                    base_key = next((
+                        key
+                        for key, pending_chunk in session.pending_chunks.items()
+                        if pending_chunk.chunk_index == base_chunk_index
+                    ), None)
+
+                    if base_key is None or not session.pending_chunks[base_key].acked:
+                        break
+
+                    session.pending_chunks.pop(base_key)
+                    base_chunk_index += 1
+
+            packets_to_resend = []
+
+            with session.condition:
+                now = time.monotonic()
+                for pending_chunk in session.pending_chunks.values():
+                    if pending_chunk.acked == False and time.monotonic() - pending_chunk.last_sent_at > RETRY_TIMEOUT and pending_chunk.retries < MAX_RETRIES:
+                        pending_chunk.retries += 1
+                        pending_chunk.last_sent_at = now
+                        packets_to_resend.append(pending_chunk.packet)
+
+            for packet in packets_to_resend:
+                UdpPacketIO.sendPacket(self.connection.file_udp_socket, session.peer_udp_address, packet)
+
+        if base_chunk_index == session.total_chunk:
+            session.state = "waiting done"
 
     def peer_udp_receiving_loop(self):
         while self.client.get_running():
@@ -124,11 +235,24 @@ class FileTransfer:
                 if received_packet is None: continue
 
                 header = packet.getHeader()
-                if header.message_type == MessageType.FILE_CHUNK:
+                if header.getMessageType() == MessageType.FILE_CHUNK:
                     response: FileChunk = FileChunkCodec.decode(packet.getPayload())
                     if self.active_transfer[response.file_id] != source: continue
-                elif header.message_type == MessageType.ACK:
+
+                elif header.getMessageType() == MessageType.ACK:
                     response: ACK = JsonPayloadCodec.decode(packet.getPayload(), ACK)
+
+                    key = (response.get_ack_stream_id(), response.get_ack_seq_num())
+                    for session in self.active_transfer.values():
+                        if session.peer_id != header.getSenderID(): continue
+                        if session.peer_udp_address != source: continue
+
+                        with session.condition:
+                            chunk = session.pending_chunks.get(key, None)
+                            if chunk is not None:
+                                chunk.acked = True
+                                session.condition.notify()
+                                break
 
             except socket.timeout:
                 continue
@@ -163,11 +287,11 @@ class FileTransfer:
             file_io.close_source()
             raise
 
-        self.active_transfer[file_id] = TransferSession(file_id, receiver, (peer_ip, peer_udp_port), file_io, file_size, total_chunk, file_checksum)
+        self.active_transfer[file_id] = TransferSession(file_id, receiver, (peer_ip, peer_udp_port), file_io, file_size, total_chunk, file_checksum, "acceptance-pending")
         return file_id, packet
 
-    def create_file_accept_packet(self, receiver: int, file_id: str) -> Packet:
-        file_acp = FileAccept(file_id)
+    def create_file_accept_packet(self, receiver: int, file_id: str, buffer_size: int) -> Packet:
+        file_acp = FileAccept(file_id, buffer_size)
         payload = JsonPayloadCodec.encode(file_acp)
         header = PacketHeader(int(ProtocolConstants.PROTOCOL_VERSION), MessageType.FILE_ACCEPTED, 0,
                               self.client.get_outgoing_stream(receiver), self.client.next_tcp_sequence(), len(payload),

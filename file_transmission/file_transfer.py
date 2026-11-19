@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
 BUFFER_SIZE_FOR_EACH_FILE = 3 * 1024 # Đơn vị Byte
 MAX_RETRIES = 10
-RETRY_TIMEOUT = 1
+RETRY_TIMEOUT = 10
 
 @dataclass
 class PendingChunk:
@@ -136,7 +136,15 @@ class FileTransfer:
 
                         threading.Thread(target=self.peer_udp_sending, name="peer-file-sending", daemon=True, args=(header.getSenderID(), response.file_id, response.buffer_size)).start()
 
-                    elif header.getMessageType() == MessageType.FILE_REJECTED: pass
+                    elif header.getMessageType() == MessageType.FILE_REJECTED:
+                        try:
+                            response: FileReject = JsonPayloadCodec.decode(packet.getPayload(), FileReject)
+                        except (ValueError, TypeError): continue
+
+                        transfer_session = self.active_transfer[response.file_id]
+                        transfer_session.file_io.close_source()
+
+                        self.client.listener.display_error(response.error_code, response.error_message)
 
                     elif header.getMessageType() == MessageType.FILE_DONE:
                         try:
@@ -152,7 +160,15 @@ class FileTransfer:
 
                             transfer_session.file_io.close_source()
 
-                    elif header.getMessageType() == MessageType.ERROR_FILE: pass
+                    elif header.getMessageType() == MessageType.ERROR_FILE:
+                        try:
+                            response: ErrorFile = JsonPayloadCodec.decode(packet.getPayload(), ErrorFile)
+                        except (ValueError, TypeError): continue
+
+                        transfer_session = self.active_transfer[response.file_id]
+                        transfer_session.file_io.close_source()
+
+                        self.client.listener.display_error(response.error_code, response.error_message)
 
             except (OSError, EOFError) as error:
                 if self.client.get_running():

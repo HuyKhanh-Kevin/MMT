@@ -300,5 +300,8 @@ def create_backend(ip, port, routes={}, interface=None):
     :param routes (dict, optional): Dictionary of route handlers. Defaults to empty dict.
     :param interface (str, optional): Network interface to bind to. Defaults to platform default.
     """
-
-    run_backend(ip, port, routes, interface)
+    is_localhost = (ip == "127.0.0.1" or ip == "::1" or ip.startswith("127.") or ip == "localhost")
+    if is_localhost:
+        run_backend_standard(ip, port, routes)
+    else:
+        run_backend(ip, port, routes, interface)

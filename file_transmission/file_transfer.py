@@ -50,7 +50,7 @@ class TransferSession:
     total_chunk: int
     checksum: str
     rwnd: int = 0
-    mss: int = ProtocolConstants.MAX_CHUNK_DATA_SIZE
+    mss: int = ProtocolConstants.MAX_JSON_PAYLOAD_SIZE
     ssthresh: int = 64 * 1024
     cwnd: int = mss
     pending_chunks: dict[tuple[int, int], PendingChunk] = field(default_factory=dict)

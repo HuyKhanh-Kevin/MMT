@@ -49,6 +49,10 @@ class TransferSession:
     file_size: int
     total_chunk: int
     checksum: str
+    rwnd: int = 0
+    mss: int = ProtocolConstants.MAX_CHUNK_DATA_SIZE
+    ssthresh: int = 64 * 1024
+    cwnd: int = mss
     pending_chunks: dict[tuple[int, int], PendingChunk] = field(default_factory=dict)
     chunk_buffer: list[FileChunk | None] = field(
         default_factory=lambda: [None] * (BUFFER_SIZE_FOR_EACH_FILE // ProtocolConstants.MAX_CHUNK_DATA_SIZE)
@@ -134,7 +138,7 @@ class FileTransfer:
                             response: FileAccept = JsonPayloadCodec.decode(packet.getPayload(), FileAccept)
                         except (ValueError, TypeError): continue
 
-                        threading.Thread(target=self.peer_udp_sending, name="peer-file-sending", daemon=True, args=(header.getSenderID(), response.file_id, response.buffer_size)).start()
+                        threading.Thread(target=self.file_transmission, name="peer-file-sending", daemon=True, args=(header.getSenderID(), response.file_id, response.buffer_size)).start()
 
                     elif header.getMessageType() == MessageType.FILE_REJECTED:
                         try:
@@ -174,21 +178,26 @@ class FileTransfer:
         session = self.active_transfer[file_id]
         base_chunk_index: int = 0
         next_chunk_index: int = 0
-        while next_chunk_index < min(base_chunk_index + buffer_size // ProtocolConstants.MAX_CHUNK_DATA_SIZE, session.total_chunk) and self.client.get_running():
+        session.rwnd = buffer_size
+        while next_chunk_index < min(base_chunk_index + min(session.rwnd // session.mss, session.cwnd // session.mss), session.total_chunk) and self.client.get_running():
             next_chunk_index = self.send_file_chunk(next_chunk_index, receiver, file_id)
         threading.Thread(target=self.resend_file_chunks, name="resend-file-chunks", daemon=True, args=file_id).start()
         threading.Thread(target=self.track_pending_chunks, name="track-pending-chunks", daemon=True, args=(file_id, receiver, base_chunk_index, next_chunk_index)).start()
 
-    def track_pending_chunks(self, file_id: str, receiver: int, buffer_size: int, base_chunk_index: int, next_chunk_index: int):
+    def track_pending_chunks(self, file_id: str, receiver: int, base_chunk_index: int, next_chunk_index: int):
         session = self.active_transfer[file_id]
         while base_chunk_index < session.total_chunk and self.client.get_running():
             for key, chunk in list(session.pending_chunks.items()):
                 if chunk.acked and not chunk.resend and not chunk.checked:
                     chunk.checked = True
+                    if session.cwnd < session.ssthresh:
+                        session.cwnd += session.mss
+                    else:
+                        session.cwnd += session.mss * (session.mss // session.cwnd)
                     self.update_timeout_interval(file_id, chunk)
                 if chunk.acked and chunk.chunk_index == base_chunk_index:
                     base_chunk_index += 1
-                    if next_chunk_index < min(base_chunk_index + buffer_size // ProtocolConstants.MAX_CHUNK_DATA_SIZE, session.total_chunk) and self.client.get_running():
+                    if next_chunk_index < min(base_chunk_index + min(session.rwnd // session.mss, session.cwnd // session.mss), session.total_chunk) and self.client.get_running():
                         next_chunk_index = self.send_file_chunk(next_chunk_index, receiver, file_id)
                     session.pending_chunks.pop(key)
 
@@ -209,6 +218,8 @@ class FileTransfer:
                 for chunk in session.pending_chunks.values():
                     if not chunk.acked and chunk.sent_at + timeout.timeout_interval > time.monotonic():
                         chunk.resend = True
+                        session.ssthresh = session.cwnd // 2
+                        session.cwnd = session.mss
                         packets_to_resend.append(chunk.packet)
                 for packet in packets_to_resend:
                     UdpPacketIO.sendPacket(self.connection.file_udp_socket, session.peer_udp_address, packet)

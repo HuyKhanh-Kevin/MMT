@@ -53,6 +53,7 @@ class TransferSession:
     mss: int = ProtocolConstants.MAX_JSON_PAYLOAD_SIZE
     ssthresh: int = 64 * 1024
     cwnd: int = mss
+    sr_wnd: int = pow(2, 31)
     pending_chunks: dict[tuple[int, int], PendingChunk] = field(default_factory=dict)
     chunk_buffer: list[FileChunk | None] = field(
         default_factory=lambda: [None] * (BUFFER_SIZE_FOR_EACH_FILE // ProtocolConstants.MAX_CHUNK_DATA_SIZE)
@@ -179,7 +180,7 @@ class FileTransfer:
         base_chunk_index: int = 0
         next_chunk_index: int = 0
         session.rwnd = buffer_size
-        while next_chunk_index < min(base_chunk_index + min(session.rwnd // session.mss, session.cwnd // session.mss), session.total_chunk) and self.client.get_running():
+        while next_chunk_index < min(base_chunk_index + min(session.sr_wnd, session.rwnd // session.mss, session.cwnd // session.mss), session.total_chunk) and self.client.get_running():
             next_chunk_index = self.send_file_chunk(next_chunk_index, receiver, file_id)
         threading.Thread(target=self.resend_file_chunks, name="resend-file-chunks", daemon=True, args=file_id).start()
         threading.Thread(target=self.track_pending_chunks, name="track-pending-chunks", daemon=True, args=(file_id, receiver, base_chunk_index, next_chunk_index)).start()
@@ -197,7 +198,7 @@ class FileTransfer:
                     self.update_timeout_interval(file_id, chunk)
                 if chunk.acked and chunk.chunk_index == base_chunk_index:
                     base_chunk_index += 1
-                    if next_chunk_index < min(base_chunk_index + min(session.rwnd // session.mss, session.cwnd // session.mss), session.total_chunk) and self.client.get_running():
+                    if next_chunk_index < min(base_chunk_index + min(session.sr_wnd, session.rwnd // session.mss, session.cwnd // session.mss), session.total_chunk) and self.client.get_running():
                         next_chunk_index = self.send_file_chunk(next_chunk_index, receiver, file_id)
                     session.pending_chunks.pop(key)
 

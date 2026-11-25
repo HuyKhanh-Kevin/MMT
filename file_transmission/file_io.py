@@ -52,10 +52,15 @@ class FileIO:
             finally:
                 self.source.seek(original_position)
 
-    def read_chunk(self) -> bytes:
+    def read_chunk(self, chunk_index: int, total_chunks: int) -> bytes:
+        if not 0 <= chunk_index < total_chunks:
+            raise ValueError("Invalid chunk index")
+
         with self.lock:
             if self.source is None:
                 raise RuntimeError("No file is currently open")
+
+            self.source.seek(chunk_index * ProtocolConstants.MAX_CHUNK_DATA_SIZE)
             return self.source.read(ProtocolConstants.MAX_CHUNK_DATA_SIZE)
 
     def close_source(self) -> None:
@@ -69,7 +74,7 @@ class FileIO:
             if self.destination is not None:
                 raise RuntimeError("File is already open")
 
-            self.destination = open(file_path, 'ab')
+            self.destination = open(file_path, 'x+b')
 
     def verify_checksum(self, checksum: str) -> bool:
         with self.lock:
@@ -88,10 +93,21 @@ class FileIO:
             finally:
                 self.destination.seek(original_position)
 
-    def write_chunk(self, chunk_data: bytes) -> None:
+    def write_chunk(self, chunk_index: int, total_chunks: int, file_size: int, chunk_data: bytes) -> None:
         with self.lock:
+            if not 0 <= chunk_index < total_chunks:
+                raise ValueError("Invalid chunk index")
+
             if self.destination is None:
                 raise RuntimeError("No file is currently open")
+
+            chunk_size = ProtocolConstants.MAX_CHUNK_DATA_SIZE
+            expected_size = min(chunk_size, file_size - chunk_index * chunk_size)
+
+            if len(chunk_data) != expected_size:
+                raise ValueError("Invalid chunk data length")
+
+            self.destination.seek(chunk_index * chunk_size)
             self.destination.write(chunk_data)
 
     def close_destination(self) -> None:

@@ -29,15 +29,15 @@ if TYPE_CHECKING:
     from client.client_account import Client
 
 BUFFER_SIZE_FOR_EACH_FILE = 3 * 1024 # Đơn vị Byte
-MAX_RETRIES = 10
-RETRY_TIMEOUT = 10
 
 @dataclass
 class PendingChunk:
     chunk_index: int
     packet: Packet
-    last_sent_at: float
+    sent_at: float
     retries: int = 0
+    resend: bool = False
+    checked: bool = False
     acked: bool = False
 
 @dataclass
@@ -49,15 +49,24 @@ class TransferSession:
     file_size: int
     total_chunk: int
     checksum: str
-    state: str
+    rwnd: int = 0
+    mss: int = ProtocolConstants.MAX_JSON_PAYLOAD_SIZE
+    ssthresh: int = 64 * 1024
+    cwnd: int = mss
+    sr_wnd: int = pow(2, 31)
     pending_chunks: dict[tuple[int, int], PendingChunk] = field(default_factory=dict)
-    condition: threading.Condition = field(default_factory=threading.Condition)
     chunk_buffer: list[FileChunk | None] = field(
         default_factory=lambda: [None] * (BUFFER_SIZE_FOR_EACH_FILE // ProtocolConstants.MAX_CHUNK_DATA_SIZE)
     )
     curr_chunk_order: int = 0
-    def addChunk(self, chunk_index: int, chunk_data: bytes) -> None:
+    def add_chunk(self, chunk_index: int, chunk_data: bytes) -> None:
         self.file_io.write_chunk(chunk_index, self.total_chunk, self.file_size, chunk_data)
+
+@dataclass
+class TimeoutPerTransfer:
+    estimated_rtt: float | None = None
+    dev_rtt: float | None = None
+    timeout_interval: float = 1.0
 
 class FileTransfer:
     def __init__(self, client: "Client"):
@@ -65,6 +74,7 @@ class FileTransfer:
         self.connection: FileConnection
 
         self.active_transfer: dict[str, TransferSession] = {}
+        self.timeout_transfer: dict[str, TimeoutPerTransfer] = {}
 
         self.lock = threading.Lock()
 
@@ -113,7 +123,7 @@ class FileTransfer:
                                 file_io.file_size = response.file_size
                                 file_io.file_checksum = response.checksum
 
-                                self.active_transfer[response.file_id] = TransferSession(response.file_id, header.getSenderID(), (connection.getpeername()[0], response.sender_udp_port), file_io, response.file_size, response.total_chunks, response.checksum, "acceptance-pending")
+                                self.active_transfer[response.file_id] = TransferSession(response.file_id, header.getSenderID(), (connection.getpeername()[0], response.sender_udp_port), file_io, response.file_size, response.total_chunks, response.checksum)
 
                                 try:
                                     buffer_size = BUFFER_SIZE_FOR_EACH_FILE 
@@ -124,17 +134,12 @@ class FileTransfer:
                                     self.active_transfer.pop(response.file_id)
                                     raise
 
-                                self.active_transfer[response.file_id].state = "sending"
-
                     elif header.getMessageType() == MessageType.FILE_ACCEPTED:
                         try:
                             response: FileAccept = JsonPayloadCodec.decode(packet.getPayload(), FileAccept)
                         except (ValueError, TypeError): continue
 
-                        transfer_session = self.active_transfer[response.file_id]
-                        transfer_session.state = "sending"
-
-                        threading.Thread(target=self.peer_udp_sending, name="peer-file-sending", daemon=True, args=(header.getSenderID(), response.file_id, response.buffer_size)).start()
+                        threading.Thread(target=self.file_transmission, name="peer-file-sending", daemon=True, args=(header.getSenderID(), response.file_id, response.buffer_size)).start()
 
                     elif header.getMessageType() == MessageType.FILE_REJECTED:
                         try:
@@ -152,13 +157,7 @@ class FileTransfer:
                         except (ValueError, TypeError): continue
 
                         transfer_session = self.active_transfer[response.file_id]
-
-                        if transfer_session.peer_id == header.getSenderID():
-                            with transfer_session.condition:
-                                transfer_session.state = "sending done"
-                                transfer_session.condition.notify_all()
-
-                            transfer_session.file_io.close_source()
+                        transfer_session.file_io.close_source()
 
                     elif header.getMessageType() == MessageType.ERROR_FILE:
                         try:
@@ -176,79 +175,70 @@ class FileTransfer:
             finally:
                 self.connection.remove_peer_connection(connection)
 
-    def peer_udp_sending(self, receiver: int, file_id: str, buffer_size: int) -> None:
+    def file_transmission(self, receiver: int, file_id: str, buffer_size: int) -> None:
         session = self.active_transfer[file_id]
         base_chunk_index: int = 0
         next_chunk_index: int = 0
+        session.rwnd = buffer_size
+        while next_chunk_index < min(base_chunk_index + min(session.sr_wnd, session.rwnd // session.mss, session.cwnd // session.mss), session.total_chunk) and self.client.get_running():
+            next_chunk_index = self.send_file_chunk(next_chunk_index, receiver, file_id)
+        threading.Thread(target=self.resend_file_chunks, name="resend-file-chunks", daemon=True, args=file_id).start()
+        threading.Thread(target=self.track_pending_chunks, name="track-pending-chunks", daemon=True, args=(file_id, receiver, base_chunk_index, next_chunk_index)).start()
 
-        while base_chunk_index < session.total_chunk and session.state == "sending" and self.client.get_running():
-            while next_chunk_index < min(base_chunk_index + buffer_size // ProtocolConstants.MAX_CHUNK_DATA_SIZE, session.total_chunk):
-                chunk_data = session.file_io.read_chunk(next_chunk_index, session.total_chunk)
-                file_chunk_packet = self.create_file_chunk_packet(receiver, file_id, next_chunk_index, chunk_data)
-
-                with session.condition:
-                    session.pending_chunks[(file_chunk_packet.getHeader().getStreamID(), file_chunk_packet.getHeader().getSequenceNumber())] = PendingChunk(next_chunk_index, file_chunk_packet, time.monotonic())
-
-                UdpPacketIO.sendPacket(self.connection.file_udp_socket, session.peer_udp_address, file_chunk_packet)
-
-                next_chunk_index += 1
-
-            with session.condition:
-                while True:
-                    base_key = next((
-                        key
-                        for key, pending_chunk in session.pending_chunks.items()
-                        if pending_chunk.chunk_index == base_chunk_index
-                    ), None)
-
-                    if base_key is None or not session.pending_chunks[base_key].acked:
-                        break
-
-                    session.pending_chunks.pop(base_key)
+    def track_pending_chunks(self, file_id: str, receiver: int, base_chunk_index: int, next_chunk_index: int):
+        session = self.active_transfer[file_id]
+        while base_chunk_index < session.total_chunk and self.client.get_running():
+            for key, chunk in list(session.pending_chunks.items()):
+                if chunk.acked and not chunk.resend and not chunk.checked:
+                    chunk.checked = True
+                    if session.cwnd < session.ssthresh:
+                        session.cwnd += session.mss
+                    else:
+                        session.cwnd += session.mss * (session.mss // session.cwnd)
+                    self.update_timeout_interval(file_id, chunk)
+                if chunk.acked and chunk.chunk_index == base_chunk_index:
                     base_chunk_index += 1
+                    if next_chunk_index < min(base_chunk_index + min(session.sr_wnd, session.rwnd // session.mss, session.cwnd // session.mss), session.total_chunk) and self.client.get_running():
+                        next_chunk_index = self.send_file_chunk(next_chunk_index, receiver, file_id)
+                    session.pending_chunks.pop(key)
 
-                if base_chunk_index == session.total_chunk: break
-                if next_chunk_index < min(base_chunk_index + buffer_size // ProtocolConstants.MAX_CHUNK_DATA_SIZE, session.total_chunk): continue
+    def send_file_chunk(self, chunk_index: int, receiver: int, file_id: str) -> int:
+        session = self.active_transfer[file_id]
+        chunk_data = session.file_io.read_chunk(chunk_index, session.total_chunk)
+        file_chunk_packet = self.create_file_chunk_packet(receiver, file_id, chunk_index, chunk_data)
+        session.pending_chunks[(file_chunk_packet.getHeader().getStreamID(), file_chunk_packet.getHeader().getSequenceNumber())] = PendingChunk(chunk_index, file_chunk_packet, time.monotonic())
+        UdpPacketIO.sendPacket(self.connection.file_udp_socket, session.peer_udp_address, file_chunk_packet)
+        return chunk_index + 1
 
-                earliest_send_time = min(
-                    chunk.last_sent_at + RETRY_TIMEOUT
-                    for chunk in session.pending_chunks.values()
-                    if not chunk.acked
-                )
+    def resend_file_chunks(self, file_id: str) -> None:
+        session = self.active_transfer[file_id]
+        timeout = self.timeout_transfer[file_id]
+        while self.client.get_running():
+            while len(session.pending_chunks) > 0:
+                packets_to_resend = []
+                for chunk in session.pending_chunks.values():
+                    if not chunk.acked and chunk.sent_at + timeout.timeout_interval > time.monotonic():
+                        chunk.resend = True
+                        session.ssthresh = session.cwnd // 2
+                        session.cwnd = session.mss
+                        packets_to_resend.append(chunk.packet)
+                for packet in packets_to_resend:
+                    UdpPacketIO.sendPacket(self.connection.file_udp_socket, session.peer_udp_address, packet)
 
-                remaining_wait_time = earliest_send_time - time.monotonic()
-
-                if remaining_wait_time > 0:
-                    session.condition.wait(timeout=remaining_wait_time)
-
-                while True:
-                    base_key = next((
-                        key
-                        for key, pending_chunk in session.pending_chunks.items()
-                        if pending_chunk.chunk_index == base_chunk_index
-                    ), None)
-
-                    if base_key is None or not session.pending_chunks[base_key].acked:
-                        break
-
-                    session.pending_chunks.pop(base_key)
-                    base_chunk_index += 1
-
-            packets_to_resend = []
-
-            with session.condition:
-                now = time.monotonic()
-                for pending_chunk in session.pending_chunks.values():
-                    if pending_chunk.acked == False and time.monotonic() - pending_chunk.last_sent_at > RETRY_TIMEOUT and pending_chunk.retries < MAX_RETRIES:
-                        pending_chunk.retries += 1
-                        pending_chunk.last_sent_at = now
-                        packets_to_resend.append(pending_chunk.packet)
-
-            for packet in packets_to_resend:
-                UdpPacketIO.sendPacket(self.connection.file_udp_socket, session.peer_udp_address, packet)
-
-        if base_chunk_index == session.total_chunk:
-            session.state = "waiting done"
+    def update_timeout_interval(self, file_id: str, chunk: PendingChunk) -> None:
+        timeout = self.timeout_transfer[file_id]
+        sample_rtt = time.monotonic() - chunk.sent_at
+        if timeout.dev_rtt is None:
+            timeout.dev_rtt = sample_rtt / 2
+        else:
+            timeout.dev_rtt = (1 - 0.25) * timeout.dev_rtt + 0.25 * abs(sample_rtt - timeout.estimated_rtt)
+        if timeout.estimated_rtt is None:
+            timeout.estimated_rtt = sample_rtt
+        else:
+            timeout.estimated_rtt = (1 - 0.125) * timeout.estimated_rtt + 0.125 * sample_rtt
+        timeout.timeout_interval = timeout.estimated_rtt + 4 * timeout.dev_rtt
+        if timeout.timeout_interval < 1.0:
+            timeout.timeout_interval = 1.0
 
     def peer_udp_receiving_loop(self):
         while self.client.get_running():
@@ -270,7 +260,7 @@ class FileTransfer:
                         flushed_count = 0
                         for chunk in session.chunk_buffer:
                             if chunk is not None:
-                                session.addChunk(chunk.chunk_order, chunk.payload_data)
+                                session.add_chunk(chunk.chunk_order, chunk.payload_data)
                                 session.curr_chunk_order += 1
                                 flushed_count += 1
                             else:
@@ -283,7 +273,7 @@ class FileTransfer:
                     ack = self.create_ack_packet(header.getSenderID(), header.getStreamID(), header.getSequenceNumber())
                     UdpPacketIO.sendPacket(self.connection.file_udp_socket, source, ack)
                     
-                    if(session.curr_chunk_order == session.total_chunk):
+                    if (session.curr_chunk_order == session.total_chunk):
                         file_done = self.create_file_done_packet(header.getSenderID(), session.file_id)
                         PacketIO.writePacket(self.connection.peer_tcp_connections[source[0]], file_done)
 
@@ -296,13 +286,9 @@ class FileTransfer:
                     for session in self.active_transfer.values():
                         if session.peer_id != header.getSenderID(): continue
                         if session.peer_udp_address != source: continue
-
-                        with session.condition:
-                            chunk = session.pending_chunks.get(key, None)
-                            if chunk is not None:
-                                chunk.acked = True
-                                session.condition.notify()
-                                break
+                        chunk = session.pending_chunks.get(key, None)
+                        if chunk is not None:
+                            chunk.acked = True
 
             except socket.timeout:
                 continue
@@ -337,7 +323,8 @@ class FileTransfer:
             file_io.close_source()
             raise
 
-        self.active_transfer[file_id] = TransferSession(file_id, receiver, (peer_ip, peer_udp_port), file_io, file_size, total_chunk, file_checksum, "acceptance-pending")
+        self.active_transfer[file_id] = TransferSession(file_id, receiver, (peer_ip, peer_udp_port), file_io, file_size, total_chunk, file_checksum)
+        self.timeout_transfer[file_id] = TimeoutPerTransfer()
         return file_id, packet
 
     def create_file_accept_packet(self, receiver: int, file_id: str, buffer_size: int) -> Packet:

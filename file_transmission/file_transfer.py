@@ -54,6 +54,7 @@ class TransferSession:
     ssthresh: int = 64 * 1024
     cwnd: int = mss
     sr_wnd: int = pow(2, 31)
+    seq_num: int = 0
     pending_chunks: dict[tuple[int, int], PendingChunk] = field(default_factory=dict)
     chunk_buffer: list[FileChunk | None] = field(
         default_factory=lambda: [None] * (BUFFER_SIZE_FOR_EACH_FILE // ProtocolConstants.MAX_CHUNK_DATA_SIZE)
@@ -204,7 +205,8 @@ class FileTransfer:
 
     def send_file_chunk(self, chunk_index: int, receiver: int, file_id: str) -> int:
         session = self.active_transfer[file_id]
-        chunk_data = session.file_io.read_chunk(chunk_index, session.total_chunk)
+        chunk_data = session.file_io.read_chunk()
+        if chunk_data == b'': return chunk_index + 1
         file_chunk_packet = self.create_file_chunk_packet(receiver, file_id, chunk_index, chunk_data)
         session.pending_chunks[(file_chunk_packet.getHeader().getStreamID(), file_chunk_packet.getHeader().getSequenceNumber())] = PendingChunk(chunk_index, file_chunk_packet, time.monotonic())
         UdpPacketIO.sendPacket(self.connection.file_udp_socket, session.peer_udp_address, file_chunk_packet)
@@ -363,7 +365,7 @@ class FileTransfer:
         file_chunk = FileChunk(file_id, chunk_index, chunk_data)
         payload = FileChunkCodec.encode(file_chunk)
         header = PacketHeader(int(ProtocolConstants.PROTOCOL_VERSION), MessageType.FILE_CHUNK, 1,
-                              self.client.get_outgoing_stream(receiver), self.client.next_udp_sequence(), len(payload),
+                              self.client.get_outgoing_stream(receiver), self.next_transfer_seq_num(file_id), len(payload),
                               self.client.id, receiver)
         return Packet(header, payload)
 
@@ -374,3 +376,9 @@ class FileTransfer:
                               self.client.get_outgoing_stream(receiver), self.client.next_udp_sequence(), len(payload),
                               self.client.id, receiver)
         return Packet(header, payload)
+
+    def next_transfer_seq_num(self, file_id: str) -> int:
+        session = self.active_transfer[file_id]
+        value = session.seq_num
+        session.seq_num += 1
+        return value

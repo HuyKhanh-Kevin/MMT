@@ -7,10 +7,15 @@ from common.payload.FileID import validate_file_id
 @dataclass(frozen=True)
 class FileChunk:
     file_id: str
+    chunk_order: int
     payload_data: bytes
 
     def __post_init__(self) -> None:
         validate_file_id(self.file_id)
+
+        # Preserve the signed 32-bit nonnegative chunk index semantics from Java.
+        if type(self.chunk_order) is not int or not 0 <= self.chunk_order <= 0x7FFFFFFF:
+            raise ValueError("chunk_order must be in the range 0..2147483647")
 
         if not isinstance(self.payload_data, (bytes, bytearray)):
             raise TypeError("payload_data must be bytes or bytearray")
@@ -26,6 +31,9 @@ class FileChunk:
     # Legacy Java-style method names for other converted modules.
     def getFileID(self) -> str:
         return self.file_id
+
+    def getChunkOrder(self) -> int:
+        return self.chunk_order
 
     def getPayloadLength(self) -> int:
         return self.payload_length

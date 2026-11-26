@@ -179,14 +179,13 @@ class FileTransfer:
     def file_transmission(self, receiver: int, file_id: str, buffer_size: int) -> None:
         session = self.active_transfer[file_id]
         base_chunk_index: int = 0
-        next_chunk_index: int = 0
         session.rwnd = buffer_size
-        while next_chunk_index < min(base_chunk_index + min(session.sr_wnd, session.rwnd // session.mss, session.cwnd // session.mss), session.total_chunk) and self.client.get_running():
-            next_chunk_index = self.send_file_chunk(next_chunk_index, receiver, file_id)
+        while session.seq_num < min(base_chunk_index + min(session.sr_wnd, session.rwnd // session.mss, session.cwnd // session.mss), session.total_chunk) and self.client.get_running():
+            self.send_file_chunk(receiver, file_id)
         threading.Thread(target=self.resend_file_chunks, name="resend-file-chunks", daemon=True, args=file_id).start()
-        threading.Thread(target=self.track_pending_chunks, name="track-pending-chunks", daemon=True, args=(file_id, receiver, base_chunk_index, next_chunk_index)).start()
+        threading.Thread(target=self.track_pending_chunks, name="track-pending-chunks", daemon=True, args=(file_id, receiver, base_chunk_index)).start()
 
-    def track_pending_chunks(self, file_id: str, receiver: int, base_chunk_index: int, next_chunk_index: int):
+    def track_pending_chunks(self, file_id: str, receiver: int, base_chunk_index: int):
         session = self.active_transfer[file_id]
         while base_chunk_index < session.total_chunk and self.client.get_running():
             for key, chunk in list(session.pending_chunks.items()):
@@ -199,17 +198,16 @@ class FileTransfer:
                     self.update_timeout_interval(file_id, chunk)
                 if chunk.acked and chunk.chunk_index == base_chunk_index:
                     base_chunk_index += 1
-                    if next_chunk_index < min(base_chunk_index + min(session.sr_wnd, session.rwnd // session.mss, session.cwnd // session.mss), session.total_chunk) and self.client.get_running():
-                        next_chunk_index = self.send_file_chunk(next_chunk_index, receiver, file_id)
+                    if session.seq_num < min(base_chunk_index + min(session.sr_wnd, session.rwnd // session.mss, session.cwnd // session.mss), session.total_chunk) and self.client.get_running():
+                        self.send_file_chunk(receiver, file_id)
                     session.pending_chunks.pop(key)
 
-    def send_file_chunk(self, chunk_index: int, receiver: int, file_id: str) -> int:
+    def send_file_chunk(self, receiver: int, file_id: str) -> None:
         session = self.active_transfer[file_id]
-        chunk_data = session.file_io.read_chunk(chunk_index, session.total_chunk)
-        file_chunk_packet = self.create_file_chunk_packet(receiver, file_id, chunk_index, chunk_data)
-        session.pending_chunks[(file_chunk_packet.getHeader().getStreamID(), file_chunk_packet.getHeader().getSequenceNumber())] = PendingChunk(chunk_index, file_chunk_packet, time.monotonic())
+        chunk_data = session.file_io.read_chunk()
+        file_chunk_packet = self.create_file_chunk_packet(receiver, file_id, chunk_data)
+        session.pending_chunks[(file_chunk_packet.getHeader().getStreamID(), file_chunk_packet.getHeader().getSequenceNumber())] = PendingChunk(file_chunk_packet.getHeader().getSequenceNumber(), file_chunk_packet, time.monotonic())
         UdpPacketIO.sendPacket(self.connection.file_udp_socket, session.peer_udp_address, file_chunk_packet)
-        return chunk_index + 1
 
     def resend_file_chunks(self, file_id: str) -> None:
         session = self.active_transfer[file_id]
@@ -360,8 +358,8 @@ class FileTransfer:
                               self.client.id, receiver)
         return Packet(header, payload)
 
-    def create_file_chunk_packet(self, receiver: int, file_id: str, chunk_index: int, chunk_data: bytes) -> Packet:
-        file_chunk = FileChunk(file_id, chunk_index, chunk_data)
+    def create_file_chunk_packet(self, receiver: int, file_id: str, chunk_data: bytes) -> Packet:
+        file_chunk = FileChunk(file_id, chunk_data)
         payload = FileChunkCodec.encode(file_chunk)
         header = PacketHeader(int(ProtocolConstants.PROTOCOL_VERSION), MessageType.FILE_CHUNK, 1,
                               self.client.get_outgoing_stream(receiver), self.next_transfer_session_seq_num(file_id), len(payload),

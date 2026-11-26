@@ -54,6 +54,7 @@ class TransferSession:
     ssthresh: int = 64 * 1024
     cwnd: int = mss
     sr_wnd: int = pow(2, 31)
+    seq_num: int = 0
     pending_chunks: dict[tuple[int, int], PendingChunk] = field(default_factory=dict)
     chunk_buffer: list[FileChunk | None] = field(
         default_factory=lambda: [None] * (BUFFER_SIZE_FOR_EACH_FILE // ProtocolConstants.MAX_CHUNK_DATA_SIZE)
@@ -273,7 +274,7 @@ class FileTransfer:
                     ack = self.create_ack_packet(header.getSenderID(), header.getStreamID(), header.getSequenceNumber())
                     UdpPacketIO.sendPacket(self.connection.file_udp_socket, source, ack)
                     
-                    if (session.curr_chunk_order == session.total_chunk):
+                    if session.curr_chunk_order == session.total_chunk:
                         file_done = self.create_file_done_packet(header.getSenderID(), session.file_id)
                         PacketIO.writePacket(self.connection.peer_tcp_connections[source[0]], file_done)
 
@@ -316,7 +317,7 @@ class FileTransfer:
             file_req = FileReq(file_id, file_name, file_size, total_chunk, file_checksum, self.connection.get_file_udp_port())
             payload = JsonPayloadCodec.encode(file_req)
             header = PacketHeader(int(ProtocolConstants.PROTOCOL_VERSION), MessageType.FILE_REQUEST, 0,
-                                  self.client.get_outgoing_stream(receiver), self.client.next_tcp_sequence(),
+                                  self.client.get_outgoing_stream(receiver), 0,
                                   len(payload), self.client.id, receiver)
             packet = Packet(header, payload)
         except Exception:
@@ -331,7 +332,7 @@ class FileTransfer:
         file_acp = FileAccept(file_id, buffer_size)
         payload = JsonPayloadCodec.encode(file_acp)
         header = PacketHeader(int(ProtocolConstants.PROTOCOL_VERSION), MessageType.FILE_ACCEPTED, 0,
-                              self.client.get_outgoing_stream(receiver), self.client.next_tcp_sequence(), len(payload),
+                              self.client.get_outgoing_stream(receiver), 0, len(payload),
                               self.client.id, receiver)
         return Packet(header, payload)
 
@@ -339,7 +340,7 @@ class FileTransfer:
         file_reject = FileReject(file_id, error.code, error.message)
         payload = JsonPayloadCodec.encode(file_reject)
         header = PacketHeader(int(ProtocolConstants.PROTOCOL_VERSION), MessageType.FILE_REJECTED, 0,
-                              self.client.get_outgoing_stream(receiver), self.client.next_tcp_sequence(), len(payload),
+                              self.client.get_outgoing_stream(receiver), 0, len(payload),
                               self.client.id, receiver)
         return Packet(header, payload)
 
@@ -347,7 +348,7 @@ class FileTransfer:
         file_done = FileDone(file_id)
         payload = JsonPayloadCodec.encode(file_done)
         header = PacketHeader(int(ProtocolConstants.PROTOCOL_VERSION), MessageType.FILE_DONE, 0,
-                              self.client.get_outgoing_stream(receiver), self.client.next_tcp_sequence(), len(payload),
+                              self.client.get_outgoing_stream(receiver), 0, len(payload),
                               self.client.id, receiver)
         return Packet(header, payload)
 
@@ -355,7 +356,7 @@ class FileTransfer:
         file_error = ErrorFile(file_id, code, message)
         payload = JsonPayloadCodec.encode(file_error)
         header = PacketHeader(int(ProtocolConstants.PROTOCOL_VERSION), MessageType.ERROR_FILE, 0,
-                              self.client.get_outgoing_stream(receiver), self.client.next_tcp_sequence(), len(payload),
+                              self.client.get_outgoing_stream(receiver), 0, len(payload),
                               self.client.id, receiver)
         return Packet(header, payload)
 
@@ -363,7 +364,7 @@ class FileTransfer:
         file_chunk = FileChunk(file_id, chunk_index, chunk_data)
         payload = FileChunkCodec.encode(file_chunk)
         header = PacketHeader(int(ProtocolConstants.PROTOCOL_VERSION), MessageType.FILE_CHUNK, 1,
-                              self.client.get_outgoing_stream(receiver), self.client.next_udp_sequence(), len(payload),
+                              self.client.get_outgoing_stream(receiver), self.next_transfer_session_seq_num(file_id), len(payload),
                               self.client.id, receiver)
         return Packet(header, payload)
 
@@ -371,6 +372,12 @@ class FileTransfer:
         ack = ACK(stream_id, seq_num)
         payload = JsonPayloadCodec.encode(ack)
         header = PacketHeader(int(ProtocolConstants.PROTOCOL_VERSION), MessageType.ACK, 0,
-                              self.client.get_outgoing_stream(receiver), self.client.next_udp_sequence(), len(payload),
+                              self.client.get_outgoing_stream(receiver), 0, len(payload),
                               self.client.id, receiver)
         return Packet(header, payload)
+
+    def next_transfer_session_seq_num(self, file_id: str) -> int:
+        session = self.active_transfer[file_id]
+        value = session.seq_num
+        session.seq_num += 1
+        return value

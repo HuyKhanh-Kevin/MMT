@@ -62,8 +62,6 @@ class Client:
         self.file_transfer: FileTransfer
 
         self.counter_lock = threading.Lock()
-        self.tcp_sequence_num = 1
-        self.udp_sequence_num = 1
         self.heartbeat_sequence_num = 1
 
         self.stream_lock = threading.Lock()
@@ -84,18 +82,6 @@ class Client:
 
     def set_file_transfer(self, file_transfer: FileTransfer) -> None:
         self.file_transfer = file_transfer
-
-    def next_tcp_sequence(self) -> int:
-        with self.counter_lock:
-            value = self.tcp_sequence_num
-            self.tcp_sequence_num += 1
-            return value
-
-    def next_udp_sequence(self) -> int:
-        with self.counter_lock:
-            value = self.udp_sequence_num
-            self.udp_sequence_num += 1
-            return value
 
     def next_heartbeat_sequence(self) -> int:
         with self.counter_lock:
@@ -252,7 +238,7 @@ class Client:
         except ValueError as error:
             print(f"Signup error: {error}")
             raise
-        header = PacketHeader(int(ProtocolConstants.PROTOCOL_VERSION), MessageType.SIGNUP_REQUEST, 0, self.get_outgoing_stream(0), self.next_tcp_sequence(), len(payload), 0, 0)
+        header = PacketHeader(int(ProtocolConstants.PROTOCOL_VERSION), MessageType.SIGNUP_REQUEST, 0, self.get_outgoing_stream(0), 0, len(payload), 0, 0)
         return Packet(header, payload)
 
     def create_login_packet(self, username: str, password: str) -> Packet:
@@ -264,7 +250,7 @@ class Client:
         except ValueError as error:
             print(f"Login error: {error}")
             raise
-        header = PacketHeader(int(ProtocolConstants.PROTOCOL_VERSION), MessageType.LOGIN_REQUEST, 0, self.get_outgoing_stream(0), self.next_tcp_sequence(), len(payload), 0, 0)
+        header = PacketHeader(int(ProtocolConstants.PROTOCOL_VERSION), MessageType.LOGIN_REQUEST, 0, self.get_outgoing_stream(0), 0, len(payload), 0, 0)
         return Packet(header, payload)
 
     def create_logout_packet(self) -> Packet:
@@ -276,7 +262,7 @@ class Client:
         except ValueError as error:
             print(f"Logout error: {error}")
             raise
-        header = PacketHeader(int(ProtocolConstants.PROTOCOL_VERSION), MessageType.LOGOUT_REQUEST, 0, self.get_outgoing_stream(0), self.next_tcp_sequence(), len(payload), self.id, 0)
+        header = PacketHeader(int(ProtocolConstants.PROTOCOL_VERSION), MessageType.LOGOUT_REQUEST, 0, self.get_outgoing_stream(0), 0, len(payload), self.id, 0)
         return Packet(header, payload)
 
     def create_user_list_packet(self, cursor: str | None = None) -> Packet:
@@ -288,7 +274,7 @@ class Client:
         except ValueError as error:
             print(f"User list error: {error}")
             raise
-        header = PacketHeader(int(ProtocolConstants.PROTOCOL_VERSION), MessageType.USER_LIST_REQUEST, 0, self.get_outgoing_stream(0), self.next_udp_sequence(), len(payload), self.id, 0)
+        header = PacketHeader(int(ProtocolConstants.PROTOCOL_VERSION), MessageType.USER_LIST_REQUEST, 0, self.get_outgoing_stream(0), 0, len(payload), self.id, 0)
         return Packet(header, payload)
 
     def create_private_message_packet(self, receiver: int, message: str) -> Packet:
@@ -300,7 +286,7 @@ class Client:
         except ValueError as error:
             print(f"Private chat message error: {error}")
             raise
-        header = PacketHeader(int(ProtocolConstants.PROTOCOL_VERSION), MessageType.CHAT_MESSAGE, 0, self.get_outgoing_stream(receiver), self.next_tcp_sequence(), len(payload), self.id, receiver)
+        header = PacketHeader(int(ProtocolConstants.PROTOCOL_VERSION), MessageType.CHAT_MESSAGE, 0, self.get_outgoing_stream(receiver), 0, len(payload), self.id, receiver)
         return Packet(header, payload)
 
     def create_global_message_packet(self, message: str) -> Packet:
@@ -312,7 +298,7 @@ class Client:
         except ValueError as error:
             print(f"Global chat message error: {error}")
             raise
-        header = PacketHeader(int(ProtocolConstants.PROTOCOL_VERSION), MessageType.CHAT_MESSAGE, 0, self.get_outgoing_stream(0), self.next_tcp_sequence(), len(payload), self.id, 0)
+        header = PacketHeader(int(ProtocolConstants.PROTOCOL_VERSION), MessageType.CHAT_MESSAGE, 0, self.get_outgoing_stream(0), 0, len(payload), self.id, 0)
         return Packet(header, payload)
 
     def create_heartbeat_packet(self) -> Packet:
@@ -322,7 +308,7 @@ class Client:
         except ValueError as error:
             print(f"Heartbeat error: {error}")
             raise
-        header = PacketHeader(int(ProtocolConstants.PROTOCOL_VERSION), MessageType.HEARTBEAT, 0, self.get_outgoing_stream(0), self.next_udp_sequence(), len(payload), self.id, 0)
+        header = PacketHeader(int(ProtocolConstants.PROTOCOL_VERSION), MessageType.HEARTBEAT, 0, self.get_outgoing_stream(0), self.next_heartbeat_sequence(), len(payload), self.id, 0)
         return Packet(header, payload)
 
     def request_user_list(self):

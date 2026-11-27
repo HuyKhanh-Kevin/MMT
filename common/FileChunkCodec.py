@@ -23,7 +23,6 @@ class FileChunkCodec:
         metadata = struct.pack(
             FileChunkCodec._FORMAT,
             file_id_bytes,
-            chunk.chunk_order,
             len(data),
         )
         return metadata + data

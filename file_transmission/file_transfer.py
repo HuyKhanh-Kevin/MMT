@@ -61,8 +61,8 @@ class TransferSession:
     )
     last_byte_read: int = 0
     last_byte_received: int = 0
-    def add_chunk(self, chunk_index: int, chunk_data: bytes) -> None: # NOTE: chunk index is eliminated
-        self.file_io.write_chunk(chunk_index, self.total_chunk, self.file_size, chunk_data) # NOTE: chunk index is eliminated
+    def add_chunk(self, chunk_data: bytes) -> None: # NOTE: chunk index is eliminated
+        self.file_io.write_chunk(chunk_data) # NOTE: chunk index is eliminated
 
 @dataclass
 class TimeoutPerTransfer:
@@ -273,7 +273,8 @@ class FileTransfer:
                             end_idx = len(session.chunk_buffer)
                         temp = session.chunk_buffer[start_idx:end_idx]
 
-                        session.add_chunk(None, temp)
+                        
+                        session.add_chunk(FileChunkCodec.decode(temp).getPayloadData())
                         session.chunk_buffer[start_idx:end_idx] = [None] * (end_idx - start_idx)
                         session.last_byte_read += len(temp)
                     else:                       
@@ -283,7 +284,7 @@ class FileTransfer:
                     ack = self.create_ack_packet(header.getSenderID(), header.getStreamID(), header.getSequenceNumber())
                     UdpPacketIO.sendPacket(self.connection.file_udp_socket, source, ack)
                     
-                    if session.curr_chunk_order == session.total_chunk:
+                    if session.last_byte_read == session.file_size:
                         file_done = self.create_file_done_packet(header.getSenderID(), session.file_id)
                         PacketIO.writePacket(self.connection.peer_tcp_connections[source[0]], file_done)
 

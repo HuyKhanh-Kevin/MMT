@@ -1,6 +1,7 @@
 import socket
 import threading
 import json
+import time
 from server.session_manager import SessionManager, ClientSession
 from server.client_handler import ClientHandler
 from common.PacketIO import PacketIO
@@ -25,9 +26,12 @@ class HybridServer:
 
                 packet = PacketIO.decode(data)
                 msg_type = packet.getHeader().getMessageType()
+                sender_id = packet.getHeader().getSenderID()
 
                 if msg_type == MessageType.HEARTBEAT or msg_type == 0x05:
-                    pass
+                    if sender_id > 0:
+                        self.session_manager.update_user_heartbeat(sender_id)
+
                 elif msg_type == MessageType.USER_LIST_REQUEST or msg_type == 0x12:
                     response_bytes = self.build_user_list_response()
                     if response_bytes:
@@ -38,6 +42,11 @@ class HybridServer:
                     break
 
         udp_sock.close()
+
+    def monitor_heartbeats(self):
+        while self.running:
+            time.sleep(5)
+            self.session_manager.cleanup_inactive_sessions(timeout=15)
 
     def build_user_list_response(self):
         try:
@@ -78,6 +87,10 @@ class HybridServer:
     def start(self):
         udp_thread = threading.Thread(target=self.listen_udp, daemon=True)
         udp_thread.start()
+
+        monitor_thread = threading.Thread(target=self.monitor_heartbeats, daemon=True)
+        monitor_thread.start()
+
         self.listen_tcp()
 
 if __name__ == "__main__":

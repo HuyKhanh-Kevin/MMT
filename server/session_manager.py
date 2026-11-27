@@ -1,4 +1,5 @@
 import threading
+import time
 from common.PacketIO import PacketIO
 
 class ClientSession:
@@ -9,7 +10,12 @@ class ClientSession:
         self.username = ""
         self.tcp_port = addr[1] if addr else 0
         self.udp_port = 0
+        self.last_heartbeat = time.time()
         self.lock = threading.Lock()
+
+    def update_heartbeat(self):
+        with self.lock:
+            self.last_heartbeat = time.time()
 
     def send_packet(self, packet):
         with self.lock:
@@ -38,3 +44,24 @@ class SessionManager:
     def get_all_sessions(self):
         with self.lock:
             return list(self.active_sessions.values())
+
+    def update_user_heartbeat(self, user_id):
+        with self.lock:
+            session = self.active_sessions.get(user_id)
+            if session:
+                session.update_heartbeat()
+
+    def cleanup_inactive_sessions(self, timeout=15):
+        now = time.time()
+        with self.lock:
+            expired = [
+                uid for uid, session in self.active_sessions.items()
+                if now - session.last_heartbeat > timeout
+            ]
+            for uid in expired:
+                session = self.active_sessions.pop(uid, None)
+                if session and session.sock:
+                    try:
+                        session.sock.close()
+                    except Exception:
+                        pass

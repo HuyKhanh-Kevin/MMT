@@ -56,6 +56,7 @@ class TestFileControlPayloads(unittest.TestCase):
             file_size=len(content),
             total_chunks=1,
             checksum=checksum,
+            sender_udp_port=6001,
         )
         self.assertEqual(self.file_id, req.file_id)
         self.assertEqual("assignment.pdf", req.file_name)
@@ -72,11 +73,12 @@ class TestFileControlPayloads(unittest.TestCase):
                 file_size=10,
                 total_chunks=1,
                 checksum="abc",
+                sender_udp_port=6001,
             )
 
     def test_file_accept_valid(self):
         """FileAccept accepts a valid file_id."""
-        accept = FileAccept(file_id=self.file_id)
+        accept = FileAccept(file_id=self.file_id, buffer_size=11000)
         self.assertEqual(self.file_id, accept.file_id)
 
     def test_file_reject_valid(self):
@@ -107,22 +109,20 @@ class TestFileChunkCodec(unittest.TestCase):
         chunk_data = b"Arbitrary chunk content up to 1024 bytes"
         original = FileChunk(
             file_id=self.file_id,
-            chunk_order=0,
             payload_data=chunk_data,
         )
         raw_wire = FileChunkCodec.encode(original)
-        # Expected size: 24 bytes metadata (16 UUID + 4 order + 4 length) + payload
-        self.assertEqual(24 + len(chunk_data), len(raw_wire))
+        # Expected size: 20 bytes metadata (16 UUID + 4 length) + payload
+        self.assertEqual(20 + len(chunk_data), len(raw_wire))
 
         decoded = FileChunkCodec.decode(raw_wire)
         self.assertEqual(original.file_id, decoded.file_id)
-        self.assertEqual(original.chunk_order, decoded.chunk_order)
         self.assertEqual(original.payload_data, decoded.payload_data)
 
     def test_chunk_codec_max_size(self):
         """1024 bytes (MAX_CHUNK_DATA_SIZE) must encode successfully."""
         max_data = b"X" * ProtocolConstants.MAX_CHUNK_DATA_SIZE
-        chunk = FileChunk(self.file_id, 5, max_data)
+        chunk = FileChunk(self.file_id, max_data)
         encoded = FileChunkCodec.encode(chunk)
         decoded = FileChunkCodec.decode(encoded)
         self.assertEqual(max_data, decoded.payload_data)
@@ -131,7 +131,7 @@ class TestFileChunkCodec(unittest.TestCase):
         """Chunk data exceeding 1024 bytes must be rejected."""
         oversized = b"X" * (ProtocolConstants.MAX_CHUNK_DATA_SIZE + 1)
         with self.assertRaises(ValueError):
-            FileChunk(self.file_id, 0, oversized)
+            FileChunk(self.file_id, oversized)
 
     def test_chunk_codec_rejects_truncated_metadata(self):
         """Truncated binary chunk must be rejected."""
@@ -155,7 +155,7 @@ class TestFileIntegrityAndReassembly(unittest.TestCase):
         chunks = []
         for order, offset in enumerate(range(0, len(data), chunk_size)):
             chunk_bytes = data[offset : offset + chunk_size]
-            chunks.append(FileChunk(self.file_id, order, chunk_bytes))
+            chunks.append(FileChunk(self.file_id, chunk_bytes))
         return chunks
 
     def test_normal_chunking_and_reassembly(self):
@@ -173,15 +173,17 @@ class TestFileIntegrityAndReassembly(unittest.TestCase):
         self.assertEqual(self.expected_checksum, _sha256(rebuilt_data))
 
     def test_out_of_order_chunks_reassemble_correctly(self):
-        """Chunks received out of order can be sorted by chunk_order to rebuild file."""
         chunks = self._split_into_file_chunks(self.original_data)
-        # Reverse delivery order
-        shuffled = list(reversed(chunks))
-
-        # Reorder by chunk_order
-        sorted_chunks = sorted(shuffled, key=lambda c: c.chunk_order)
-        rebuilt_data = b"".join(c.payload_data for c in sorted_chunks)
-
+        packets = []
+        for sequence, chunk in enumerate(chunks):
+            payload = FileChunkCodec.encode(chunk)
+            packet = Packet(PacketHeader(2, MessageType.FILE_CHUNK, 1, 1,
+                                         sequence, len(payload), 1, 2), payload)
+            packets.append(PacketCodec.decode(PacketCodec.encode(packet)))
+        packets.reverse()
+        packets.sort(key=lambda packet: packet.header.sequenceNumber)
+        rebuilt_data = b"".join(FileChunkCodec.decode(packet.payload).payload_data
+                                for packet in packets)
         self.assertEqual(self.expected_checksum, _sha256(rebuilt_data))
 
     def test_corrupted_chunk_fails_checksum_verification(self):
@@ -191,7 +193,7 @@ class TestFileIntegrityAndReassembly(unittest.TestCase):
         # Corrupt one byte in the second chunk
         corrupted_payload = bytearray(chunks[1].payload_data)
         corrupted_payload[0] ^= 0xFF
-        corrupted_chunk = FileChunk(self.file_id, 1, bytes(corrupted_payload))
+        corrupted_chunk = FileChunk(self.file_id, bytes(corrupted_payload))
 
         rebuilt_corrupted = (
             chunks[0].payload_data

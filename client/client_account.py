@@ -24,7 +24,6 @@ class Client(AccountUIClient):
 
     def _display_users(self, users):
         self.user_list_users = list(users)
-        super()._display_users(users)
 
     def _notify(self, method, *args):
         if method == "display_logout_response":

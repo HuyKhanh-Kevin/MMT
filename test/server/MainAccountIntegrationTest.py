@@ -127,12 +127,18 @@ class MainAccountIntegrationTest(unittest.TestCase):
         with patch.object(UdpPacketIO, "sendPacket", side_effect=drop_presence):
             self.register("bob")
             deadline = time.monotonic() + 7
-            while True:
-                users = alice.listener.users.get(timeout=max(0.01, deadline - time.monotonic()))
-                if {user.username for user in users} == {"alice", "bob"}:
+            while time.monotonic() < deadline:
+                if {user.username for user in alice.user_list_users} == {"alice", "bob"}:
                     break
-                if time.monotonic() >= deadline:
-                    self.fail("Online users were not refreshed")
+                time.sleep(0.02)
+            self.assertEqual({"alice", "bob"},
+                             {user.username for user in alice.user_list_users})
+            self.assertTrue(alice.listener.users.empty())
+            for _ in range(2):
+                alice.request_user_list()
+                users = alice.listener.users.get(timeout=2)
+                self.assertEqual({"alice", "bob"}, {user.username for user in users})
+                self.assertTrue(alice.listener.users.empty())
 
     def test_expiry_removes_both_account_and_chat_session(self):
         alice = self.register("alice")

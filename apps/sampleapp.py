@@ -19,32 +19,64 @@ app.sampleapp
 
 """
 
-import sys
-import os
-import importlib.util
 import json
 
 from  daemon import StreapRous
 
 app = StreapRous()
 
+
+_account_routes = None
+
+
+def configure_account_sessions(sessions):
+    from apps.routes.account_http_routes import AccountHttpRoutes
+    global _account_routes
+    if sessions is None:
+        _account_routes = None
+    else:
+        _account_routes = AccountHttpRoutes(sessions)
+
+
+def _account_response(method, path, headers, body):
+    if _account_routes is None:
+        result = {"status": "failed", "reason": "ACCOUNT_API_NOT_CONFIGURED"}
+    else:
+        _, result = _account_routes.dispatch(method, path, headers, body)
+
+
+    return json.dumps(result).encode("utf-8")
+
+
 @app.route('/login', methods=['POST'])
-def login(headers="guest", body="anonymous"):
-    """
-    Handle user login via POST request.
+def login(headers=None, body=b""):
+    return _account_response("POST", "/login", headers or {}, body)
 
-    This route simulates a login process and prints the provided headers and body
-    to the console.
 
-    :param headers (str): The request headers or user identifier.
-    :param body (str): The request body or login payload.
-    """
-    print("[SampleApp] Logging in {} to {}".format(headers, body))
-    data = {"message": "Welcome to the RESTful TCP WebApp"}
+@app.route('/signup', methods=['POST'])
+def signup(headers=None, body=b""):
+    return _account_response("POST", "/signup", headers or {}, body)
 
-    # Convert to JSON string
-    json_str = json.dumps(data)
-    return (json_str.encode("utf-8"))
+
+@app.route('/logout', methods=['POST'])
+def logout(headers=None, body=b""):
+    return _account_response("POST", "/logout", headers or {}, body)
+
+
+@app.route('/users', methods=['GET'])
+def users(headers=None, body=b""):
+    return _account_response("GET", "/users", headers or {}, body)
+
+
+@app.route('/session', methods=['GET'])
+def session(headers=None, body=b""):
+    return _account_response("GET", "/session", headers or {}, body)
+
+
+@app.route('/heartbeat', methods=['POST'])
+def heartbeat(headers=None, body=b""):
+    return _account_response("POST", "/heartbeat", headers or {}, body)
+
 
 @app.route("/echo", methods=["POST"])
 def echo(headers="guest", body="anonymous"):

@@ -1,4 +1,3 @@
-
 from dataclasses import dataclass
 
 
@@ -40,7 +39,7 @@ class UserInfo:
         ):
             raise ValueError("Invalid peer IP")
 
-        # Validate ports
+
         if (
             type(self.tcp_port) is not int
             or not 1 <= self.tcp_port <= 65535
@@ -48,5 +47,3 @@ class UserInfo:
             or not 1 <= self.file_udp_port <= 65535
         ):
             raise ValueError("Invalid peer endpoint")
-
-    

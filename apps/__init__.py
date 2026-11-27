@@ -10,4 +10,7 @@
 # while attending the course
 #
 
-from .sampleapp import create_sampleapp
+def create_sampleapp(ip, port):
+
+    from .sampleapp import create_sampleapp as create
+    return create(ip, port)

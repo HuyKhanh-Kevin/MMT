@@ -1,4 +1,3 @@
-
 from dataclasses import dataclass, field
 from typing import Sequence
 
@@ -24,7 +23,7 @@ class UserListResponse:
             if not isinstance(self.next_cursor, str):
                 raise TypeError("next_cursor must be a string or None")
 
-        # Equivalent to Java List.copyOf(users)
+
         object.__setattr__(
             self,
             "users",

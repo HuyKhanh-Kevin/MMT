@@ -4,6 +4,10 @@ target/
 # Compiled Java files
 *.class
 
+# Python bytecode
+__pycache__/
+*.py[cod]
+
 # IDE settings
 .idea/
 .vscode/

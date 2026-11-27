@@ -16,7 +16,8 @@ class Console(Listener):
             print("1. Online users list")
             print("2. Private chat")
             print("3. Global chat")
-            print("4. Logout")
+            print("4. Send file")
+            print("5. Logout")
 
     def start_sending(self):
         while self.client.get_running():
@@ -36,6 +37,12 @@ class Console(Listener):
                     packet = self.client.create_global_message_packet(message)
                     self.client.send_tcp_packet(packet)
                 elif command == "4":
+                    receiver = int(input("Enter receiver ID: "))
+                    file_path = input("Enter file path: ")
+                    peer_ip = input("Enter peer IP: ")
+                    peer_udp_port = int(input("Enter peer UDP port: "))
+                    self.client.file_transfer.create_file_request_packet(receiver, file_path, peer_ip, peer_udp_port)
+                elif command == "5":
                     packet = self.client.create_logout_packet()
                     self.client.send_tcp_packet(packet)
             else:

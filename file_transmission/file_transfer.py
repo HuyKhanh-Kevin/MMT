@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from client.client_account import Client
 
-BUFFER_SIZE_FOR_EACH_FILE = 3 * 1024 # Đơn vị Byte
+BUFFER_SIZE_FOR_EACH_FILE = 10 * ProtocolConstants.MAX_JSON_PAYLOAD_SIZE # Đơn vị Byte
 
 @dataclass
 class PendingChunk:
@@ -56,12 +56,13 @@ class TransferSession:
     sr_wnd: int = pow(2, 31)
     seq_num: int = 0
     pending_chunks: dict[tuple[int, int], PendingChunk] = field(default_factory=dict)
-    chunk_buffer: list[FileChunk | None] = field(
-        default_factory=lambda: [None] * (BUFFER_SIZE_FOR_EACH_FILE // ProtocolConstants.MAX_CHUNK_DATA_SIZE)
+    chunk_buffer: list[bytes | None] = field(
+        default_factory=lambda: [None] * BUFFER_SIZE_FOR_EACH_FILE
     )
-    curr_chunk_order: int = 0
-    def add_chunk(self, chunk_index: int, chunk_data: bytes) -> None:
-        self.file_io.write_chunk(chunk_index, self.total_chunk, self.file_size, chunk_data)
+    last_byte_read: int = 0
+    last_byte_received: int = 0
+    def add_chunk(self, chunk_index: int, chunk_data: bytes) -> None: # NOTE: chunk index is eliminated
+        self.file_io.write_chunk(chunk_index, self.total_chunk, self.file_size, chunk_data) # NOTE: chunk index is eliminated
 
 @dataclass
 class TimeoutPerTransfer:
@@ -252,23 +253,33 @@ class FileTransfer:
 
                 header = packet.getHeader()
                 if header.messageType == MessageType.FILE_CHUNK:
-                    response: FileChunk = FileChunkCodec.decode(packet.getPayload())
-                    session: TransferSession = self.active_transfer[response.file_id]
+                    
+                    payload: bytes = packet.getPayload()
+                    file_chunk: FileChunk = FileChunkCodec.decode(payload)
+                    session: TransferSession = self.active_transfer[file_chunk.file_id]
+
+                    received_byte = header.getSequenceNumber() * ProtocolConstants.MAX_JSON_PAYLOAD_SIZE
+                    new_last_byte_received = received_byte + len(payload)
+                    
+                    if not session.last_byte_read <= received_byte or not new_last_byte_received <= session.last_byte_read + BUFFER_SIZE_FOR_EACH_FILE: continue
                     if session.peer_udp_address != source: continue
                     
-                    if response.chunk_order == session.curr_chunk_order:
-                        session.chunk_buffer[0] = response
-                        flushed_count = 0
-                        for chunk in session.chunk_buffer:
-                            if chunk is not None:
-                                session.add_chunk(chunk.chunk_order, chunk.payload_data)
-                                session.curr_chunk_order += 1
-                                flushed_count += 1
-                            else:
-                                break 
-                        session.chunk_buffer = session.chunk_buffer[flushed_count:] + [None] * flushed_count
-                    else:
-                        session.chunk_buffer[response.chunk_order - session.curr_chunk_order] = response
+                    indexOf = lambda byte : byte % BUFFER_SIZE_FOR_EACH_FILE
+                    session.chunk_buffer[indexOf(received_byte) : indexOf(new_last_byte_received)] = payload
+                    if received_byte == session.last_byte_read:
+                        # NOTE: flush buffer
+                        start_idx = indexOf(session.last_byte_read)
+                        try:
+                            end_idx = session.chunk_buffer.index(None, indexOf(session.last_byte_read))
+                        except ValueError:
+                            end_idx = len(session.chunk_buffer)
+                        temp = session.chunk_buffer[start_idx:end_idx]
+
+                        session.add_chunk(None, temp)
+                        session.chunk_buffer[start_idx:end_idx] = [None] * (end_idx - start_idx)
+                        session.last_byte_read += len(temp)
+                    else:                       
+                        session.last_byte_received = max(session.last_byte_received, new_last_byte_received)
                     print(f"[UDP receiver] {header.senderID} buffer: {[chunk.chunk_order if chunk is not None else None for chunk in session.chunk_buffer]}")
 
                     ack = self.create_ack_packet(header.getSenderID(), header.getStreamID(), header.getSequenceNumber())

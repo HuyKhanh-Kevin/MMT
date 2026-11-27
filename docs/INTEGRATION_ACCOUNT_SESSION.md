@@ -4,6 +4,31 @@ Chạy từ thư mục gốc bằng Python 3.10+; module chỉ cần standard li
 Đã kiểm thử trên Windows với Python 3.12. Nếu python trỏ vào Microsoft Store,
 dùng đường dẫn Python đã cài.
 
+## Chạy client và server trên main
+
+Server tích hợp Account, Session, Presence và chuyển tiếp chat:
+
+```powershell
+python -m server.tcp_server --host 127.0.0.1 --port 8080 --udp-port 5000
+```
+
+Mỗi terminal client:
+
+```powershell
+python -m client.client_init --server-ip 127.0.0.1 --server-port 8080 --udp-port 5000
+```
+
+`TCPServer` dùng chung xử lý tài khoản và heartbeat của `TrackerServer`.
+Chỉ chạy một trong hai server cho cùng nhóm client và file tài khoản.
+`client_account.Client` dùng lại `AccountClient` qua lớp tương thích `Client`,
+giữ các hàm giao diện và truyền file đang gọi. Không xoá `AccountClient.py`,
+`Client.py` hoặc `PeerEndpoint.py`; API HTTP cũng dùng chung phần này.
+`ClientListener.py` được giữ cho giao diện cũ và test tích hợp.
+
+Heartbeat được gửi ngay sau login rồi mỗi 5 giây. Danh sách online được tải
+lại khi nhận presence và định kỳ 5 giây; mỗi trang UDP thử tối đa 3 lần.
+Logout giữ kết nối TCP để người dùng có thể login lại.
+
 ## Chạy demo
 
 Terminal server:

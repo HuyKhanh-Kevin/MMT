@@ -4,6 +4,9 @@ from common.payload.UserInfo import UserInfo
 
 
 class Listener(ABC):
+    def display_presence(self, update):
+        pass
+
     @abstractmethod
     def display_user_list(self, users: list[UserInfo]) -> None: pass
 

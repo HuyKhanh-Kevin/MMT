@@ -1,10 +1,24 @@
 from common.PacketIO import PacketIO
 from common.MessageType import MessageType
+from common.JsonPayloadCodec import JsonPayloadCodec
+from common.payload.LoginResponse import LoginResponse
 
 class ClientHandler:
-    def __init__(self, session, session_manager):
+    def __init__(self, session, session_manager, account_handler, sessions, connection):
         self.session = session
         self.session_manager = session_manager
+        self.account_handler = account_handler
+        self.sessions = sessions
+        self.connection = connection
+
+    def handle_packet(self, packet):
+        if packet.header.messageType == MessageType.CHAT_MESSAGE:
+            if (not self.sessions.has_session(self.connection)
+                    or packet.header.senderID != self.session.user_id):
+                return self.account_handler.error(packet, 1004, "UNAUTHENTICATED")
+            self.relay_chat_message(packet)
+            return None
+        return self.dispatch_to_dong_handlers(packet)
 
     def handle(self):
         sock = self.session.sock
@@ -15,20 +29,16 @@ class ClientHandler:
                 if packet is None:
                     break
 
-                msg_type = packet.getHeader().getMessageType()
-
-                # Phối hợp với Ca: Chuyển tiếp tin nhắn Chat (0x03)
-                if msg_type == MessageType.CHAT_MESSAGE or msg_type == 0x03:
-                    self.relay_chat_message(packet)
-                # Ghép các Handler nghiệp vụ của Đông
-                else:
-                    self.dispatch_to_dong_handlers(packet)
+                response = self.handle_packet(packet)
+                if response is not None:
+                    self.session.send_packet(response)
 
         except (ConnectionResetError, BrokenPipeError, EOFError, OSError):
             print(f"[SERVER] Client {self.session.addr} ngắt kết nối an toàn.")
         except Exception as e:
             print(f"[SERVER] Lỗi xử lý Client: {e}")
         finally:
+            self.sessions.disconnect(self.connection)
             self.session_manager.remove_session(self.session)
             try:
                 sock.close()
@@ -55,4 +65,13 @@ class ClientHandler:
             print(f"[SERVER] Lỗi chuyển tiếp chat: {e}")
 
     def dispatch_to_dong_handlers(self, packet):
-        pass
+        response = self.account_handler.handle_tcp(
+            self.connection, self.session.addr[0], packet)
+        if response.header.messageType == MessageType.LOGIN_RESPONSE:
+            result = JsonPayloadCodec.decode(response.payload, LoginResponse)
+            if result.status == "success":
+                self.session_manager.register_user(result.user_id, self.session)
+        if not self.sessions.has_session(self.connection):
+            self.session_manager.remove_session(self.session)
+            self.session.user_id = 0
+        return response

@@ -28,7 +28,7 @@ class SessionManager:
 
     def remove_session(self, session):
         with self.lock:
-            if session.user_id != 0 and session.user_id in self.active_sessions:
+            if self.active_sessions.get(session.user_id) is session:
                 del self.active_sessions[session.user_id]
                 print(f"[SERVER] User disconnected: ID={session.user_id}")
 

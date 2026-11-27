@@ -114,23 +114,33 @@ class TrackerServer:
                     request = PacketIO.readPacket(peer)
                     if request is None:
                         break
-                    response = self.handler.handle_tcp(connection, source_ip, request)
+                    response = self._handle_tcp(connection, source_ip, request)
                     if self.sessions.has_session(connection):
                         peer.settimeout(None)
                     else:
                         peer.settimeout(self._idle_timeout)
-                    PacketIO.writePacket(peer, response)
+                    if response is not None:
+                        self._send_response(connection, peer, response)
                     self._publish_changes()
         except (OSError, EOFError):
             pass
         except Exception:
             LOG.exception("Account connection failed")
         finally:
-            self.sessions.disconnect(connection)
+            self._disconnect(connection)
             self._publish_changes()
             with self._lock:
                 self._connections.pop(connection, None)
                 self._workers.discard(threading.current_thread())
+
+    def _handle_tcp(self, connection, source_ip, request):
+        return self.handler.handle_tcp(connection, source_ip, request)
+
+    def _send_response(self, connection, peer, response):
+        PacketIO.writePacket(peer, response)
+
+    def _disconnect(self, connection):
+        self.sessions.disconnect(connection)
 
     def _udp_loop(self):
         while not self._stop.is_set():

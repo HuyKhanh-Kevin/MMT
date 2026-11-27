@@ -74,3 +74,6 @@ class Console(Listener):
 
     def display_error(self, code, message) -> None:
         print(f"Code: {code} | Message: {message}")
+
+    def display_presence(self, update) -> None:
+        print(f"{update.username}: {update.status}")

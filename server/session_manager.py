@@ -7,6 +7,8 @@ class ClientSession:
         self.addr = addr
         self.user_id = 0
         self.username = ""
+        self.tcp_port = addr[1] if addr else 0
+        self.udp_port = 0
         self.lock = threading.Lock()
 
     def send_packet(self, packet):

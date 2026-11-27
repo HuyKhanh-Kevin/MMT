@@ -1,5 +1,6 @@
 import socket
 import threading
+import json
 from server.session_manager import SessionManager, ClientSession
 from server.client_handler import ClientHandler
 from common.PacketIO import PacketIO
@@ -28,9 +29,9 @@ class HybridServer:
                 if msg_type == MessageType.HEARTBEAT or msg_type == 0x05:
                     pass
                 elif msg_type == MessageType.USER_LIST_REQUEST or msg_type == 0x12:
-                    response_packet = self.build_user_list_response()
-                    if response_packet:
-                        udp_sock.sendto(response_packet.encode(), addr)
+                    response_bytes = self.build_user_list_response()
+                    if response_bytes:
+                        udp_sock.sendto(response_bytes, addr)
 
             except Exception:
                 if not self.running:
@@ -39,7 +40,21 @@ class HybridServer:
         udp_sock.close()
 
     def build_user_list_response(self):
-        return None
+        try:
+            users_info = []
+            for session in self.session_manager.get_all_sessions():
+                users_info.append({
+                    "user_id": session.user_id,
+                    "username": session.username,
+                    "status": "online",
+                    "ip": session.addr[0] if session.addr else "127.0.0.1",
+                    "tcp_port": session.tcp_port
+                })
+            
+            payload = json.dumps({"users": users_info, "next_cursor": None}).encode('utf-8')
+            return payload
+        except Exception:
+            return None
 
     def listen_tcp(self):
         server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

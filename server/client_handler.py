@@ -1,3 +1,4 @@
+import json
 from common.PacketIO import PacketIO
 from common.MessageType import MessageType
 
@@ -34,7 +35,6 @@ class ClientHandler:
 
     def relay_chat_message(self, packet):
         receiver_id = packet.getHeader().getReceiverID()
-
         try:
             if receiver_id == 0:
                 for target in self.session_manager.get_all_sessions():

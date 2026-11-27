@@ -6,7 +6,7 @@ from .payload.FileChunk import FileChunk
 
 
 class FileChunkCodec:
-    _FORMAT = ">16sII"
+    _FORMAT = ">16sI"
     _METADATA_SIZE = struct.calcsize(_FORMAT)
 
     @staticmethod

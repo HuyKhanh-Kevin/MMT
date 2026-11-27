@@ -12,6 +12,7 @@ from common.MessageType import MessageType
 from common.UdpPacketIO import UdpPacketIO
 from server.account_exception import AccountException
 from server.tcp_server import TCPServer
+from server.tracker_server import TrackerServer
 
 
 class Events(Listener):
@@ -97,6 +98,25 @@ class MainAccountIntegrationTest(unittest.TestCase):
         self.assertEqual((alice.id, "everyone"), bob.listener.messages.get(timeout=2))
         bob.send_tcp_packet(bob.create_logout_packet())
         self.assertEqual(("bob", "offline"), alice.listener.presence.get(timeout=2))
+
+    def test_chat_rejected_by_account_only_tracker_does_not_disconnect(self):
+        with tempfile.TemporaryDirectory() as temp:
+            with TrackerServer(tcp_port=0, udp_port=0,
+                               account_file=Path(temp) / "accounts.json") as server:
+                with Client("127.0.0.1", server.tcp_port, server.udp_port, 6000, 6001) as client:
+                    client.listener = Events()
+                    client.signup("alice", "password123")
+                    client.login("alice", "password123")
+                    for receiver in (0, 2):
+                        packet = client.create_private_message_packet(receiver, "hello")
+                        client.send_tcp_packet(packet)
+                        code, message = client.listener.errors.get(timeout=2)
+                        self.assertEqual(1003, code)
+                        self.assertEqual("INVALID_CONTROL_HEADER", message)
+                        self.assertTrue(client.get_running())
+                        self.assertTrue(client.get_authenticated())
+                        self.assertEqual(["alice"],
+                                         [user.username for user in client.request_user_list()])
 
     def test_discovery_timeout_and_server_error_do_not_block_later_requests(self):
         alice = self.register("alice")

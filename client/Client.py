@@ -204,10 +204,12 @@ class Client(AccountClient):
             body = JsonPayloadCodec.decode(packet.payload, ChatMessage)
             self._queue_callback(self._notify, "display_message", h.senderID, body.text)
             return True
-        if h.messageType == MessageType.ERROR and h.streamID != 0:
+        if h.messageType == MessageType.ERROR:
+            body = JsonPayloadCodec.decode(packet.payload, ErrorPayload)
+            if h.streamID == 0 and body.related_stream_id == 0:
+                return False
             if h.senderID != 0 or h.receiverID != self.user_id:
                 raise ValueError("Wrong application error recipient")
-            body = JsonPayloadCodec.decode(packet.payload, ErrorPayload)
             self._queue_callback(self._notify, "display_error", body.error_code, body.error_message)
             return True
         return False

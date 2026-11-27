@@ -6,7 +6,7 @@ from .payload.FileChunk import FileChunk
 
 
 class FileChunkCodec:
-    _FORMAT = ">16sII"
+    _FORMAT = ">16sI"
     _METADATA_SIZE = struct.calcsize(_FORMAT)
 
     @staticmethod
@@ -41,12 +41,10 @@ class FileChunkCodec:
         if len(raw) > metadata_size + ProtocolConstants.MAX_CHUNK_DATA_SIZE:
             raise ValueError("Chunk is too large")
 
-        file_id_bytes, chunk_order, payload_length = struct.unpack(
+        file_id_bytes, payload_length = struct.unpack(
             FileChunkCodec._FORMAT, raw[:metadata_size]
         )
         data = raw[metadata_size:]
-        if chunk_order > 0x7FFFFFFF:
-            raise ValueError("Invalid chunk order")
         if payload_length > ProtocolConstants.MAX_CHUNK_DATA_SIZE:
             raise ValueError("Chunk payload exceeds maximum size")
         if payload_length != len(data):
@@ -55,4 +53,4 @@ class FileChunkCodec:
         identifier = uuid.UUID(bytes=file_id_bytes)
         if identifier.version != 4:
             raise ValueError("file_id in chunk is not a UUIDv4")
-        return FileChunk(str(identifier), chunk_order, data)
+        return FileChunk(str(identifier), data)

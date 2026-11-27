@@ -257,13 +257,13 @@ class FileTransfer:
                     session: TransferSession = self.active_transfer[file_chunk.file_id]
 
                     received_byte = header.getSequenceNumber() * ProtocolConstants.MAX_JSON_PAYLOAD_SIZE
-                    new_last_byte_received = received_byte + len(payload)
+                    new_last_byte_received = received_byte + len(file_chunk)
                     
                     if not session.last_byte_read <= received_byte or not new_last_byte_received <= session.last_byte_read + BUFFER_SIZE_FOR_EACH_FILE: continue
                     if session.peer_udp_address != source: continue
                     
                     indexOf = lambda byte : byte % BUFFER_SIZE_FOR_EACH_FILE
-                    session.chunk_buffer[indexOf(received_byte) : indexOf(new_last_byte_received)] = payload
+                    session.chunk_buffer[indexOf(received_byte) : indexOf(new_last_byte_received)] = file_chunk
                     if received_byte == session.last_byte_read:
                         # NOTE: flush buffer
                         start_idx = indexOf(session.last_byte_read)
@@ -274,7 +274,7 @@ class FileTransfer:
                         temp = session.chunk_buffer[start_idx:end_idx]
 
                         
-                        session.add_chunk(FileChunkCodec.decode(temp).getPayloadData())
+                        session.add_chunk(temp)
                         session.chunk_buffer[start_idx:end_idx] = [None] * (end_idx - start_idx)
                         session.last_byte_read += len(temp)
                     else:                       

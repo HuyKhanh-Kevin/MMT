@@ -41,7 +41,9 @@ class Console(Listener):
                     file_path = input("Enter file path: ")
                     peer_ip = input("Enter peer IP: ")
                     peer_udp_port = int(input("Enter peer UDP port: "))
-                    self.client.file_transfer.create_file_request_packet(receiver, file_path, peer_ip, peer_udp_port)
+                    file_id_and_packet = self.client.file_transfer.create_file_request_packet(receiver, file_path, peer_ip, peer_udp_port)
+                    print("File ID: ", file_id_and_packet.file_id)
+                    self.client.file_transfer.peer_tcp_sending(peer_ip, peer_udp_port, file_id_and_packet.packet)
                 elif command == "5":
                     packet = self.client.create_logout_packet()
                     self.client.send_tcp_packet(packet)

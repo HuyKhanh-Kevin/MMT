@@ -94,7 +94,7 @@ class FileTransfer:
             if connection is not None:
                 PacketIO.writePacket(connection, packet)
 
-    def peer_tcp_receiving_loop(self, connection: socket.socket) -> None:
+    def peer_tcp_receiving_loop(self, connection: socket.socket, peer_ip: str) -> None:
         if connection is not None:
             try:
                 while self.client.get_running():
@@ -161,7 +161,7 @@ class FileTransfer:
 
                         transfer_session = self.active_transfer[response.file_id]
                         transfer_session.file_io.close_source()
-                        print("Done sending file")
+                        print("\nDone sending file " + response.file_id + " to user ID: " + str(header.getSenderID()))
 
                     elif header.getMessageType() == MessageType.ERROR_FILE:
                         try:
@@ -177,7 +177,7 @@ class FileTransfer:
                 if self.client.get_running():
                     print(f"TCP error: {error}")
             finally:
-                self.connection.remove_peer_connection(connection)
+                self.connection.remove_peer_connection(connection, peer_ip)
 
     def file_transmission(self, receiver: int, file_id: str, buffer_size: int) -> None:
         session = self.active_transfer[file_id]
@@ -219,7 +219,7 @@ class FileTransfer:
         while self.client.get_running():
             if len(session.pending_chunks) > 0:
                 packets_to_resend = []
-                for chunk in session.pending_chunks.values():
+                for key, chunk in list(session.pending_chunks.items()):
                     if not chunk.acked and chunk.sent_at + timeout.timeout_interval < time.monotonic():
                         chunk.resend = True
                         session.ssthresh = session.cwnd // 2
@@ -298,7 +298,7 @@ class FileTransfer:
                         session.total_file_chunk_read += 1
 
                     buffered_bytes = sum(1 for b in session.chunk_buffer if b is not None)
-                    print(f"[UDP receiver] {header.senderID} buffered bytes: {buffered_bytes}/{buf_size}")
+                    # print(f"[UDP receiver] {header.senderID} buffered bytes: {buffered_bytes}/{buf_size}")
 
                     ack = self.create_ack_packet(header.getSenderID(), header.getStreamID(), header.getSequenceNumber(), buf_size - (session.last_byte_received - session.last_byte_read))
                     UdpPacketIO.sendPacket(self.connection.file_udp_socket, source, ack)
@@ -307,12 +307,12 @@ class FileTransfer:
                         session.file_io.close_destination()
                         file_done = self.create_file_done_packet(header.getSenderID(), session.file_id)
                         PacketIO.writePacket(self.connection.peer_tcp_connections[source[0]], file_done)
-                        print("Done receiving file")
+                        print("\nDone receiving file " + file_chunk.file_id + " from user ID: " + str(header.getSenderID()))
 
                 elif header.messageType == MessageType.ACK:
                     response: ACK = JsonPayloadCodec.decode(packet.getPayload(), ACK)
                     # NOTE: Để tạm để test
-                    print(f"[UDP receiver] {header.senderID} sent ACK: {response.ack_seq_num}")
+                    # print(f"[UDP receiver] {header.senderID} sent ACK: {response.ack_seq_num}")
 
 
                     key = (response.get_ack_stream_id(), response.get_ack_seq_num())

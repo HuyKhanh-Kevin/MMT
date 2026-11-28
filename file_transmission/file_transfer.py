@@ -61,7 +61,7 @@ class TransferSession:
     )
     last_byte_read: int = 0
     last_byte_received: int = 0
-    total_file_bytes_read: int = 0
+    total_file_chunk_read: int = 0
     def add_chunk(self, chunk_data: bytes) -> None: # NOTE: chunk index is eliminated
         self.file_io.write_chunk(chunk_data) # NOTE: chunk index is eliminated
 
@@ -161,6 +161,7 @@ class FileTransfer:
 
                         transfer_session = self.active_transfer[response.file_id]
                         transfer_session.file_io.close_source()
+                        print("Done sending file")
 
                     elif header.getMessageType() == MessageType.ERROR_FILE:
                         try:
@@ -189,7 +190,7 @@ class FileTransfer:
 
     def track_pending_chunks(self, file_id: str, receiver: int, base_chunk_index: int):
         session = self.active_transfer[file_id]
-        while base_chunk_index < session.total_chunk and self.client.get_running():
+        while self.client.get_running():
             for key, chunk in list(session.pending_chunks.items()):
                 if chunk.acked and not chunk.resend and not chunk.checked:
                     chunk.checked = True
@@ -203,6 +204,7 @@ class FileTransfer:
                     if session.seq_num < min(base_chunk_index + min(session.sr_wnd, session.rwnd // session.mss, session.cwnd // session.mss), session.total_chunk) and self.client.get_running():
                         self.send_file_chunk(receiver, file_id)
                     session.pending_chunks.pop(key)
+            if base_chunk_index >= session.total_chunk: break
 
     def send_file_chunk(self, receiver: int, file_id: str) -> None:
         session = self.active_transfer[file_id]
@@ -215,16 +217,17 @@ class FileTransfer:
         session = self.active_transfer[file_id]
         timeout = self.timeout_transfer[file_id]
         while self.client.get_running():
-            while len(session.pending_chunks) > 0:
+            if len(session.pending_chunks) > 0:
                 packets_to_resend = []
                 for chunk in session.pending_chunks.values():
-                    if not chunk.acked and chunk.sent_at + timeout.timeout_interval > time.monotonic():
+                    if not chunk.acked and chunk.sent_at + timeout.timeout_interval < time.monotonic():
                         chunk.resend = True
                         session.ssthresh = session.cwnd // 2
                         session.cwnd = session.mss
                         packets_to_resend.append(chunk.packet)
                 for packet in packets_to_resend:
                     UdpPacketIO.sendPacket(self.connection.file_udp_socket, session.peer_udp_address, packet)
+            if len(session.pending_chunks) == 0: break
 
     def update_timeout_interval(self, file_id: str, chunk: PendingChunk) -> None:
         timeout = self.timeout_transfer[file_id]
@@ -265,7 +268,7 @@ class FileTransfer:
                     new_last_byte_received = received_byte + len(payload)
 
                     if received_byte < session.last_byte_read:
-                        ack = self.create_ack_packet(header.getSenderID(), header.getStreamID(), header.getSequenceNumber())
+                        ack = self.create_ack_packet(header.getSenderID(), header.getStreamID(), header.getSequenceNumber(), buf_size - (session.last_byte_received - session.last_byte_read))
                         UdpPacketIO.sendPacket(self.connection.file_udp_socket, source, ack)
                         continue
 
@@ -292,7 +295,7 @@ class FileTransfer:
                         session.add_chunk(file_data)
 
                         session.last_byte_read += slot_size
-                        session.total_file_bytes_read += len(file_data)
+                        session.total_file_chunk_read += 1
 
                     buffered_bytes = sum(1 for b in session.chunk_buffer if b is not None)
                     print(f"[UDP receiver] {header.senderID} buffered bytes: {buffered_bytes}/{buf_size}")
@@ -300,9 +303,11 @@ class FileTransfer:
                     ack = self.create_ack_packet(header.getSenderID(), header.getStreamID(), header.getSequenceNumber(), buf_size - (session.last_byte_received - session.last_byte_read))
                     UdpPacketIO.sendPacket(self.connection.file_udp_socket, source, ack)
 
-                    if session.total_file_bytes_read >= session.file_size:
+                    if session.total_file_chunk_read >= session.total_chunk:
+                        session.file_io.close_destination()
                         file_done = self.create_file_done_packet(header.getSenderID(), session.file_id)
                         PacketIO.writePacket(self.connection.peer_tcp_connections[source[0]], file_done)
+                        print("Done receiving file")
 
                 elif header.messageType == MessageType.ACK:
                     response: ACK = JsonPayloadCodec.decode(packet.getPayload(), ACK)

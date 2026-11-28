@@ -69,13 +69,14 @@ class FileIO:
             if self.destination is not None:
                 raise RuntimeError("File is already open")
 
-            self.destination = open(file_path, 'ab')
+            self.destination = open(file_path, 'x+b')
 
     def verify_checksum(self, checksum: str) -> bool:
         with self.lock:
             if self.destination is None:
                 raise RuntimeError("No file is currently open")
 
+            self.destination.flush()
             original_position: int = self.destination.tell()
             try:
                 self.destination.seek(0)

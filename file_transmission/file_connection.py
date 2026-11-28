@@ -32,6 +32,8 @@ class FileConnection:
 
         self.peer_tcp_connections: dict[str, socket.socket] = {}
 
+        self.lock = threading.Lock()
+
     def set_file_transfer(self, file_transfer : "FileTransfer"):
         self.file_transfer = file_transfer
 
@@ -51,7 +53,7 @@ class FileConnection:
 
             if self.peer_tcp_connections.get(address[0]) is None:
                 self.peer_tcp_connections[address[0]] = connection
-                threading.Thread(target=self.file_transfer.peer_tcp_receiving_loop, args=(connection,)).start()
+                threading.Thread(target=self.file_transfer.peer_tcp_receiving_loop, args=(connection, address[0])).start()
 
     def connect_peer(self, peer_ip: str, peer_tcp_port: int) -> None:
         if self.peer_tcp_connections.get(peer_ip, None) is None:
@@ -63,7 +65,7 @@ class FileConnection:
                 raise
             connection = tmp_connection
             self.peer_tcp_connections[peer_ip] = connection
-            threading.Thread(target=self.file_transfer.peer_tcp_receiving_loop, args=(connection,)).start()
+            threading.Thread(target=self.file_transfer.peer_tcp_receiving_loop, args=(connection, peer_ip)).start()
 
     def get_peer_tcp_port(self) -> int:
         return self.peer_tcp_socket.getsockname()[1]
@@ -74,16 +76,18 @@ class FileConnection:
     def get_peer_tcp_connection(self, peer_ip: str) -> socket.socket | None:
         return self.peer_tcp_connections.get(peer_ip, None)
 
-    def remove_peer_connection(self, connection: socket.socket) -> None:
+    def remove_peer_connection(self, connection: socket.socket, peer_ip: str) -> None:
         if connection is not None:
-            self.peer_tcp_connections.pop(connection.getpeername()[0])
+            with self.lock:
+                if self.peer_tcp_connections.get(peer_ip, None) is connection:
+                    self.peer_tcp_connections.pop(peer_ip)
             connection.close()
 
     def close_connection(self) -> None:
         self.stop_event.set()
         self.file_udp_socket.close()
 
-        for connection in self.peer_tcp_connections.values():
+        for connection in list(self.peer_tcp_connections.values()):
             try:
                 connection.shutdown(socket.SHUT_RDWR)
             except OSError:

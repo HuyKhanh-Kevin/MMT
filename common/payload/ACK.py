@@ -6,7 +6,8 @@ from dataclasses import dataclass
 class ACK:
     ack_stream_id: int
     ack_seq_num: int
-
+    rwnd: int
+    
     def __post_init__(self):
         if type(self.ack_stream_id) is not int:
             raise TypeError("ack_stream_id must be an integer")

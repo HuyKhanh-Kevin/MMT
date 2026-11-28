@@ -271,11 +271,11 @@ class FileTransfer:
 
                     if received_byte + slot_size > session.last_byte_read + buf_size:
                         continue
-
-                    for i, b in enumerate(payload):
-                        session.chunk_buffer[(received_byte + i) % buf_size] = b
-
-                    session.last_byte_received = max(session.last_byte_received, new_last_byte_received)
+                    
+                    if session.chunk_buffer[received_byte % buf_size] is None:
+                        for i, b in enumerate(payload):
+                            session.chunk_buffer[(received_byte + i) % buf_size] = b
+                        session.last_byte_received = max(session.last_byte_received, new_last_byte_received)
 
                     while session.chunk_buffer[session.last_byte_read % buf_size] is not None:
                         raw_chunk_bytes = bytearray()

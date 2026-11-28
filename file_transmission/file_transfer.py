@@ -184,7 +184,7 @@ class FileTransfer:
         session.rwnd = buffer_size
         while session.seq_num < min(base_chunk_index + min(session.sr_wnd, session.rwnd // session.mss, session.cwnd // session.mss), session.total_chunk) and self.client.get_running():
             self.send_file_chunk(receiver, file_id)
-        threading.Thread(target=self.resend_file_chunks, name="resend-file-chunks", daemon=True, args=file_id).start()
+        threading.Thread(target=self.resend_file_chunks, name="resend-file-chunks", daemon=True, args=(file_id,)).start()
         threading.Thread(target=self.track_pending_chunks, name="track-pending-chunks", daemon=True, args=(file_id, receiver, base_chunk_index)).start()
 
     def track_pending_chunks(self, file_id: str, receiver: int, base_chunk_index: int):
@@ -254,7 +254,7 @@ class FileTransfer:
                 if header.messageType == MessageType.FILE_CHUNK:
                     payload: bytes = packet.getPayload()
                     file_chunk: FileChunk = FileChunkCodec.decode(payload)
-                    session: TransferSession = self.active_transfer.get(file_chunk.file_id)
+                    session = self.active_transfer.get(file_chunk.file_id)
 
                     if session is None or session.peer_udp_address != source:
                         continue
@@ -309,13 +309,15 @@ class FileTransfer:
                     # NOTE: Để tạm để test
                     print(f"[UDP receiver] {header.senderID} sent ACK: {response.ack_seq_num}")
 
+
                     key = (response.get_ack_stream_id(), response.get_ack_seq_num())
                     for session in self.active_transfer.values():
                         if session.peer_id != header.getSenderID(): continue
                         if session.peer_udp_address != source: continue
-                        chunk = session.pending_chunks.get(key, None)
-                        if chunk is not None:
-                            chunk.acked = True
+                        pending_chunk = session.pending_chunks.get(key, None)
+                        if pending_chunk is not None:
+                            pending_chunk.acked = True
+                            session.rwnd = response.rwnd
 
             except socket.timeout:
                 continue
